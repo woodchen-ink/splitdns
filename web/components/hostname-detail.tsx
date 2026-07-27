@@ -1,11 +1,11 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
 import type { Hostname } from "@/lib/types";
+import { useMounted } from "@/lib/hooks/use-mounted";
 import { HostnameForm } from "@/components/hostname-form";
 import { PlanWizard } from "@/components/plan-wizard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,8 +19,7 @@ export function HostnameDetail() {
   const router = useRouter();
 
   // 构建期 pathname 与浏览器端不同, 挂载后再判定, 避免水合不一致
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useMounted();
 
   const raw = pathname.split("/").filter(Boolean).at(-1) ?? "";
   const isNew = raw === "new";
