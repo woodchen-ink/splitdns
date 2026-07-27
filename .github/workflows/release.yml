@@ -47,10 +47,12 @@ jobs:
 
       - name: 构建绿色版与安装版
         working-directory: desktop
+        # 不能带 -s: desktop/frontend/ 不进仓库, 干净检出时得靠 wails 跑 frontend:build 生成,
+        # 跳过的话 wails 会塞一个占位 index.html 进去, 编译照样通过但装出来是个空壳
         # -webview2 embed: 目标机器没装 WebView2 运行时也能自己拉起来装, 不能假设环境
         # -skipbindings: 前端不用 Wails 的 JS 绑定, 所有交互都走 /api
         # -nsis: 顺带出一个安装版, 与绿色版是同一份二进制
-        run: wails build -platform windows/amd64 -webview2 embed -skipbindings -s -nsis
+        run: wails build -platform windows/amd64 -webview2 embed -skipbindings -nsis
 
       - name: 打包
         working-directory: desktop/build/bin

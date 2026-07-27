@@ -116,6 +116,13 @@ func extractAssets(root string) error {
 	if err != nil {
 		return err
 	}
+	// Wails 在产物目录缺失时会塞一个占位 index.html 让编译通过, 装出来就是个空壳。
+	// 与其让用户对着一张占位页发懵, 不如启动即报错并指出是怎么构建坏的。
+	if _, err := fs.Stat(sub, "_next"); err != nil {
+		return fmt.Errorf("二进制里没有真正的前端产物, 这个包构建坏了 " +
+			"(构建时必须让 wails 跑 frontend:build, 别带 -s 跳过)")
+	}
+
 	stamp, err := assetsStamp(sub)
 	if err != nil {
 		return err

@@ -75,11 +75,12 @@ cd web && npm run build && npx eslint app components lib
 出包 (绿色版 + 安装版, 产物在 `desktop/build/bin/`):
 
 ```bash
-cd desktop && wails build -platform windows/amd64 -webview2 embed -skipbindings -s -nsis
+cd desktop && wails build -platform windows/amd64 -webview2 embed -skipbindings -nsis
 ```
 
 前端产物由 `web` 的 `build:desktop` 脚本拷进 `desktop/frontend/dist` 再嵌进二进制 —— Go 的 embed 不能引用
-模块目录之外的文件。运行时按内容哈希决定是否重新摊到数据目录, **别改回按大小之类的近似判断**:
+模块目录之外的文件。**构建时别带 `-s`**: 该目录不进仓库, 跳过前端构建的话 Wails 会塞一个占位 `index.html`,
+编译照样通过, 装出来却是个空壳。启动时有一道校验会拦住这种包。运行时按内容哈希决定是否重新摊到数据目录, **别改回按大小之类的近似判断**:
 只改子页面时首页大小不变, 会让新二进制配着旧前端跑。
 
 打 `v*` tag 触发 GitHub Actions 出 Release。
