@@ -202,7 +202,7 @@ func stepSatisfied(key string, h model.Hostname, snap model.Snapshot) (ok bool, 
 			return false, true, "DNSPod 上还查不到这个域名"
 		}
 		if !snap.DNSPodEnabled {
-			return false, true, "域名加好了, 但解析还是暂停状态"
+			return false, true, "域名加好了, 但解析没有对外生效 (DNSPod 状态: " + orNone(snap.DNSPodStatus) + ")"
 		}
 		return true, true, ""
 

@@ -140,6 +140,7 @@ func inspectDNSPod(ctx context.Context, h model.Hostname, snap *model.Snapshot) 
 	if d, err := dp.DescribeDomain(ctx, zone); err == nil {
 		snap.DNSPodNameservers = d.Nameservers
 		snap.DNSPodEnabled = d.Enabled
+		snap.DNSPodStatus = d.Status
 	} else {
 		return []model.Finding{fetchFailed("fetch.dnspod_domain", "读取 DNSPod 域名失败", err)}
 	}

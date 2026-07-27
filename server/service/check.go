@@ -60,10 +60,11 @@ func checkZoneEnabled(snap model.Snapshot) []model.Finding {
 		return nil
 	}
 	return []model.Finding{{
-		Level: model.LevelError,
-		Code:  "dnspod.paused",
-		Title: "DNSPod 上这个域名的解析是暂停状态",
-		Fix:   "记录配得再对也不会生效。在「在 DNSPod 添加域名」那一步点自动执行即可开启",
+		Level:  model.LevelError,
+		Code:   "dnspod.paused",
+		Title:  "DNSPod 上这个域名的解析没有对外生效",
+		Detail: "DNSPod 返回的状态是 " + orNone(snap.DNSPodStatus),
+		Fix:    "记录配得再对也不会生效。在「在 DNSPod 添加域名」那一步点自动执行即可开启",
 	}}
 }
 

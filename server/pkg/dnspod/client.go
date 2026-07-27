@@ -3,6 +3,7 @@ package dnspod
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	terrors "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
@@ -33,9 +34,15 @@ type Domain struct {
 	Nameservers []string
 	// Grade 套餐等级, 决定可用线路数量 (免费版只有 默认/境内/境外)
 	Grade string
-	// Enabled 解析是否处于启用状态。新加的域名默认暂停, 不开解析记录不生效
+	// Status 原始状态值 (ENABLE / LOCK / PAUSE / SPAM), 判错时靠它对照
+	Status string
+	// Enabled 解析是否在对外生效
 	Enabled bool
 }
+
+// 只有这两个状态是真的不解析。用黑名单而不是"只认 ENABLE"的白名单:
+// 腾讯云返回大小写不总一致, 也可能出现文档外的取值, 白名单会把它们全误判成暂停。
+var pausedStatuses = map[string]bool{"PAUSE": true, "SPAM": true}
 
 // DescribeDomain 查询域名基础信息。域名不在该账号下时返回明确错误。
 func (c *Client) DescribeDomain(ctx context.Context, domain string) (*Domain, error) {
@@ -63,7 +70,8 @@ func (c *Client) DescribeDomain(ctx context.Context, domain string) (*Domain, er
 	if info.Grade != nil {
 		d.Grade = *info.Grade
 	}
-	d.Enabled = info.Status == nil || *info.Status == "ENABLE"
+	d.Status = deref(info.Status)
+	d.Enabled = !pausedStatuses[strings.ToUpper(d.Status)]
 	return d, nil
 }
 
