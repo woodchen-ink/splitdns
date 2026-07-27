@@ -25,7 +25,7 @@ const COMMON_LINES = ["默认", "境内", "境外"];
 const ORIGIN_KINDS = [
   { value: "cname", label: "第三方 CDN CNAME" },
   { value: "ip", label: "直连源站 IP" },
-  { value: "saas_fallback", label: "CF SaaS 回退源" },
+  { value: "saas_fallback", label: "CF SaaS 落点 (该区任意橙云记录)" },
   { value: "saas_custom", label: "CF SaaS 自定义源" },
 ];
 

@@ -42,7 +42,8 @@ type Origin struct {
 func (Origin) TableName() string { return "origin" }
 
 // NeedsSNIRoute 判定该回源是否要求源站额外配置 SNI 路由。
-// 判据是"有没有独立 SNI", 不是硬编码 Kind 列表, 新增回源类型时无需改这里。
+// 判据是"有没有 SNI", 不是硬编码 Kind 列表, 新增回源类型时无需改这里。
+// SNI 与落点值相同也照样要求 —— 回源 TLS 握手用的就是这个名字, 源站认不出来一样 403。
 func (o Origin) NeedsSNIRoute() bool {
-	return o.SNI != "" && o.SNI != o.Value
+	return o.SNI != ""
 }
