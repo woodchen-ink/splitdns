@@ -25,8 +25,8 @@ const COMMON_LINES = ["默认", "境内", "境外"];
 const ORIGIN_KINDS = [
   { value: "cname", label: "第三方 CDN CNAME" },
   { value: "ip", label: "直连源站 IP" },
-  { value: "saas_fallback", label: "CF SaaS 落点 (该区任意橙云记录)" },
-  { value: "saas_custom", label: "CF SaaS 自定义源" },
+  { value: "saas_fallback", label: "CF SaaS 落点 (解析指向它, 把流量带进 CF)" },
+  { value: "saas_custom", label: "CF SaaS 自定义源 (CF 收到后转给它, 不是解析目标)" },
 ];
 
 type DraftRoute = Pick<Route, "line" | "originId" | "kind" | "value" | "address" | "sni">;

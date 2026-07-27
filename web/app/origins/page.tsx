@@ -21,8 +21,16 @@ import {
 // 回源类型与它们的说明。后端按"有没有独立 SNI"判定是否需要源站补路由,
 // 这里的取值只影响表单提示, 新增类型不会让页面失灵。
 const KINDS = [
-  { value: "saas_fallback", label: "CF SaaS 落点", hint: "填 SaaS 区里任意一条橙云记录的主机名; 留空则用该区当前的回退源" },
-  { value: "saas_custom", label: "CF SaaS 自定义源", hint: "源站必须能路由这个 SNI, 否则回源 403" },
+  {
+    value: "saas_fallback",
+    label: "CF SaaS 落点",
+    hint: "DNS 那条 CNAME 的值, 决定流量怎么进 CF。填 SaaS 区里任意一条橙云记录的主机名; 留空则用该区当前的回退源",
+  },
+  {
+    value: "saas_custom",
+    label: "CF SaaS 自定义源",
+    hint: "不是解析目标! 它配在自定义主机名上, 决定流量进了 CF 之后往哪台机器转。只有该域名要回源到另一台机器时才需要, 且源站必须能路由这个 SNI, 否则 403",
+  },
   { value: "cname", label: "第三方 CDN CNAME", hint: "如 EdgeOne 给的加速 CNAME" },
   { value: "ip", label: "直连源站 IP", hint: "解析直接落到这个 IP, 不过任何 CDN" },
 ];

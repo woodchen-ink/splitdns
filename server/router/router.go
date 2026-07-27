@@ -35,6 +35,8 @@ func New(cfg *config.Config) http.Handler {
 	api.HandleFunc("POST /api/credentials/{id}/check", handler.CheckCredential)
 	api.HandleFunc("DELETE /api/credentials/{id}", handler.DeleteCredential)
 
+	api.HandleFunc("POST /api/open", handler.OpenExternal)
+
 	api.HandleFunc("GET /api/export/db", handler.ExportDatabase)
 	api.HandleFunc("POST /api/import/db", handler.ImportDatabase)
 

@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/glebarez/go-sqlite v1.21.2
 	github.com/glebarez/sqlite v1.11.0
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.143
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/dnspod v1.3.131
 	github.com/woodchen-ink/go-web-utils v1.6.1
