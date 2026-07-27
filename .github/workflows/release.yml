@@ -9,14 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: 取版本号
-        id: ver
-        shell: bash
+      - id: ver
         # tag 触发时用 tag 名, 手动触发时用短 commit, 保证产物名永远能对上一次构建
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -25,23 +23,15 @@ jobs:
             echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          # 两个模块各有自己的 go.sum, 都要参与缓存 key
-          cache-dependency-path: |
-            server/go.sum
-            desktop/go.sum
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-build
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: 安装 wails 与 NSIS
+      - name: 安装 NSIS
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
           choco install nsis -y --no-progress
           "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
@@ -57,7 +47,7 @@ jobs:
       - name: 打包
         working-directory: desktop/build/bin
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           Copy-Item ../../../README.md .
           Compress-Archive -Path splitdns.exe,README.md -DestinationPath "splitdns-$env:VERSION-windows-amd64-portable.zip"
@@ -65,20 +55,52 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: splitdns-${{ steps.ver.outputs.version }}-windows-amd64
+          name: windows
           path: |
             desktop/build/bin/*-portable.zip
             desktop/build/bin/*-installer.exe
 
-      - name: 发布 Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-build
+
+      - name: 构建 universal .app
+        working-directory: desktop
+        # darwin 端要链 WebKit, 只能在 macOS 上编译, 交叉编译不可行
+        run: wails build -platform darwin/universal -skipbindings
+
+      - name: 打包
+        working-directory: desktop/build/bin
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        # 用 ditto 而不是 zip: .app 是目录, 里面有符号链接与可执行位, zip 会丢
+        run: ditto -c -k --sequesterRsrc --keepParent splitdns.app "splitdns-$VERSION-macos-universal.zip"
+
+      - uses: actions/upload-artifact@v4
         with:
-          files: |
-            desktop/build/bin/*-portable.zip
-            desktop/build/bin/*-installer.exe
+          name: macos
+          path: desktop/build/bin/*-macos-universal.zip
+
+  release:
+    needs: [version, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
           generate_release_notes: true
           body: |
+            ### Windows
+
             两个包用的是同一份二进制, 差别只在数据放哪:
 
             | | 数据位置 | 说明 |
@@ -86,6 +108,18 @@ jobs:
             | **安装版** `*-installer.exe` | `%APPDATA%\splitdns` | 常用, 升级重装不动数据 |
             | **绿色版** `*-portable.zip` | exe 同级 `data/` | 解压即用, 整个文件夹拷走就带走全部配置 |
 
-            都不用先装运行时: 机器上没有 WebView2 会自己拉起来装。
+            机器上没有 WebView2 会自己拉起来装。
 
-            升级方式: 装上/解压覆盖即可, 首次启动会自动更新内置前端, 数据不受影响。
+            ### macOS
+
+            `*-macos-universal.zip` 解压出 `splitdns.app`, Intel 与 Apple Silicon 通用。
+            数据在 `~/Library/Application Support/splitdns`。
+
+            **没有做签名和公证**, 首次打开会被 Gatekeeper 拦下。两种放行方式任选:
+
+            - 右键点 `splitdns.app` → 打开 → 在弹窗里再点一次「打开」
+            - 或者终端跑: `xattr -dr com.apple.quarantine /Applications/splitdns.app`
+
+            ### 升级
+
+            覆盖安装即可, 首次启动会自动更新内置前端, 数据不受影响。

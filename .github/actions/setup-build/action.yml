@@ -1,0 +1,23 @@
+name: 准备构建环境
+description: 装好 Go / Node / wails, Windows 与 macOS 两条构建线共用
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: "1.25"
+        # 两个模块各有自己的 go.sum, 都要参与缓存 key
+        cache-dependency-path: |
+          server/go.sum
+          desktop/go.sum
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+        cache: npm
+        cache-dependency-path: web/package-lock.json
+
+    - name: 安装 wails
+      shell: bash
+      run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0

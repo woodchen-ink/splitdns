@@ -26,15 +26,26 @@ Cloudflare 的权威 DNS 不支持普通记录按地区返回不同答案，而�
 
 ## 快速开始
 
-到 [Releases](https://github.com/woodchen-ink/splitdns/releases) 下载，两个版本随便挑：
+到 [Releases](https://github.com/woodchen-ink/splitdns/releases) 下载。
+
+**Windows**
 
 | | 数据存在哪 | 适合 |
 |---|---|---|
-| **安装版** `splitdns-*-installer.exe` | `%APPDATA%\splitdns` | 常用，升级重装不动数据 |
-| **绿色版** `splitdns-*-portable.zip` | exe 同级 `data/` | 解压即用，整个文件夹拷走就带走全部配置 |
+| **安装版** `*-installer.exe` | `%APPDATA%\splitdns` | 常用，升级重装不动数据 |
+| **绿色版** `*-portable.zip` | exe 同级 `data/` | 解压即用，整个文件夹拷走就带走全部配置 |
 
-不需要安装运行时（没有 WebView2 会自己拉起来装），不需要域名，不需要登录——它不监听任何端口，
-密钥只存在你自己机器上。
+机器上没有 WebView2 会自己拉起来装。
+
+**macOS**
+
+`*-macos-universal.zip` 解压出 `splitdns.app`，Intel 与 Apple Silicon 通用，数据在
+`~/Library/Application Support/splitdns`。
+
+没有做签名和公证，首次打开会被 Gatekeeper 拦下——右键点 `.app` → 打开 → 再点一次「打开」即可，
+或者 `xattr -dr com.apple.quarantine /Applications/splitdns.app`。
+
+不需要域名，不需要登录——它不监听任何端口，密钥只存在你自己机器上。
 
 ## 怎么用：一个完整例子
 

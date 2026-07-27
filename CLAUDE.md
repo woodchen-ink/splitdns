@@ -72,11 +72,19 @@ cd server && go build ./... && go vet ./...
 cd web && npm run build && npx eslint app components lib
 ```
 
-出包 (绿色版 + 安装版, 产物在 `desktop/build/bin/`):
+出包 (产物在 `desktop/build/bin/`):
 
 ```bash
 cd desktop && wails build -platform windows/amd64 -webview2 embed -skipbindings -nsis
 ```
+
+```bash
+cd desktop && wails build -platform darwin/universal -skipbindings
+```
+
+**macOS 端只能在 macOS 上构建** (要链 WebKit, 交叉编译不可行), CI 里是独立的 job。
+macOS 上数据一律走 `~/Library/Application Support/splitdns` —— 二进制在 .app 包里,
+往旁边写会污染包并破坏签名。发出去的 .app 没签名没公证, Gatekeeper 会拦, 说明写在 Release 里。
 
 前端产物由 `web` 的 `build:desktop` 脚本拷进 `desktop/frontend/dist` 再嵌进二进制 —— Go 的 embed 不能引用
 模块目录之外的文件。**构建时别带 `-s`**: 该目录不进仓库, 跳过前端构建的话 Wails 会塞一个占位 `index.html`,

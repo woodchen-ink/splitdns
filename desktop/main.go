@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	// 把时区数据库嵌进二进制: Windows 自身没有 tzdata, Go 默认去 GOROOT 找,
 	// 没装 Go 的机器上 time.LoadLocation 会失败, 进而在启动时 panic
 	_ "time/tzdata"
@@ -71,12 +72,16 @@ func main() {
 // resolveDataDir 选数据目录。
 // 绿色版优先放在 exe 同级的 data/ 下, 拷走整个文件夹就能带走全部配置;
 // exe 落在 Program Files 这类只读位置时回退到用户配置目录。
+//
+// macOS 例外: 二进制在 .app 包里, 往旁边写等于往包里塞东西, 既污染也会破坏签名,
+// 所以那边一律走用户配置目录。
 func resolveDataDir() (string, error) {
-	exe, err := os.Executable()
-	if err == nil {
-		beside := filepath.Join(filepath.Dir(exe), "data")
-		if writable(beside) {
-			return beside, nil
+	if runtime.GOOS != "darwin" {
+		if exe, err := os.Executable(); err == nil {
+			beside := filepath.Join(filepath.Dir(exe), "data")
+			if writable(beside) {
+				return beside, nil
+			}
 		}
 	}
 
