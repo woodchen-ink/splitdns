@@ -150,19 +150,20 @@ func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 // 回源类型是开放式取值: SaaS 回退源要到运行时才知道具体主机名, 其余类型一律取配置里的落点值,
 // 新增回源类型不需要在这里加分支。
 func expectedValue(route model.Route, snap model.Snapshot) (string, error) {
-	if route.Origin == nil {
-		return "", fmt.Errorf("线路未绑定回源")
+	target := route.Target()
+	if target == nil {
+		return "", fmt.Errorf("线路既没引用回源, 也没填落点值")
 	}
-	if route.Origin.Kind == model.OriginSaaSFallback {
+	if target.Kind == model.OriginSaaSFallback {
 		if snap.FallbackOrigin == "" {
 			return "", fmt.Errorf("SaaS 区还没设置回退源")
 		}
 		return snap.FallbackOrigin, nil
 	}
-	if route.Origin.Value == "" {
-		return "", fmt.Errorf("回源 %s 没有填落点值", route.Origin.Name)
+	if target.Value == "" {
+		return "", fmt.Errorf("回源 %s 没有填落点值", target.Name)
 	}
-	return route.Origin.Value, nil
+	return target.Value, nil
 }
 
 // apexRecords 收集区顶点 (@) 上按线路索引的记录, 这是分线路解析的落点。

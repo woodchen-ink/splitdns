@@ -52,17 +52,47 @@ func (h Hostname) SaaSCredential() uint {
 }
 
 // Route 是"某条线路应该解析到哪个回源"的绑定关系。
-// 同一个 Origin 可以被任意多个 Route 引用, 这是多访问域名共用回源的实现方式。
+// 落点有两种写法, 二选一:
+//   - 引用回源库里的 Origin (OriginID 非 0): 适合会被多个域名共用的落点, 改一处全部跟着变
+//   - 直接内联填值 (OriginID 为 0): 适合 EdgeOne 的 CNAME、一次性的直连 IP 这类天然不复用的落点,
+//     不必为了配一个域名先去回源库建条目
 type Route struct {
 	ID         uint `gorm:"primaryKey" json:"id"`
 	HostnameID uint `gorm:"column:hostname_id;index;not null" json:"hostnameId"`
 	// Line DNSPod 线路名, 如 默认 / 境内 / 境外; 免费版只有这三条
 	Line string `gorm:"column:line;size:64;not null" json:"line"`
-	// OriginID 该线路指向的回源
-	OriginID uint `gorm:"column:origin_id;index;not null" json:"originId"`
+	// OriginID 引用的回源; 为 0 表示用下面的内联落点
+	OriginID uint `gorm:"column:origin_id;index" json:"originId"`
 
-	// Origin 预加载的回源详情, 供前端直接渲染, 不需要再调一次接口
+	// Kind 内联落点的类型, 取值同 Origin.Kind
+	Kind string `gorm:"column:kind;size:32" json:"kind"`
+	// Value 内联落点值
+	Value string `gorm:"column:value;size:256" json:"value"`
+	// Address 内联落点背后的源站 IP, 仅在需要程序代建橙云记录时用到
+	Address string `gorm:"column:address;size:64" json:"address"`
+	// SNI 内联落点的回源 SNI
+	SNI string `gorm:"column:sni;size:256" json:"sni"`
+
+	// Origin 预加载的回源详情, 供前端直接渲染; 内联落点时为 nil
 	Origin *Origin `gorm:"foreignKey:OriginID" json:"origin"`
 }
 
 func (Route) TableName() string { return "route" }
+
+// Target 返回该线路实际生效的落点, 屏蔽"引用回源"与"内联填值"的差别。
+// 判定逻辑只认这个结果, 不在各处重复分支。
+func (r Route) Target() *Origin {
+	if r.Origin != nil && r.OriginID != 0 {
+		return r.Origin
+	}
+	if r.Value == "" && r.Kind == "" {
+		return nil
+	}
+	return &Origin{
+		Name:    r.Line + " 线内联落点",
+		Kind:    r.Kind,
+		Value:   r.Value,
+		Address: r.Address,
+		SNI:     r.SNI,
+	}
+}

@@ -31,11 +31,14 @@ func Init(path string) error {
 	if err != nil {
 		return fmt.Errorf("打开数据库失败: %w", err)
 	}
+	// 新增 model 必须同步登记到这里, 漏了不会有编译错误, 只会在运行时报 no such table
 	if err := db.AutoMigrate(
 		&model.Credential{},
 		&model.Origin{},
 		&model.Hostname{},
 		&model.Route{},
+		&model.Plan{},
+		&model.Step{},
 	); err != nil {
 		return fmt.Errorf("自动迁移失败: %w", err)
 	}

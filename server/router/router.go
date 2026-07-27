@@ -36,6 +36,10 @@ func New(cfg *config.Config) http.Handler {
 	api.HandleFunc("POST /api/credentials/{id}/check", handler.CheckCredential)
 	api.HandleFunc("DELETE /api/credentials/{id}", handler.DeleteCredential)
 
+	api.HandleFunc("GET /api/discover/cf-zones", handler.CloudflareZones)
+	api.HandleFunc("GET /api/discover/dnspod-domains", handler.DNSPodDomains)
+	api.HandleFunc("GET /api/discover/saas-origins", handler.SaaSOrigins)
+
 	api.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		resputil.OK(w, map[string]string{"status": "ok"})
 	})

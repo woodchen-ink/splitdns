@@ -32,7 +32,12 @@ export interface Route {
   id: number;
   hostnameId: number;
   line: string;
+  // originId 为 0 表示不引用回源库, 用下面的内联字段直接填落点
   originId: number;
+  kind: string;
+  value: string;
+  address: string;
+  sni: string;
   origin: Origin | null;
 }
 

@@ -160,7 +160,7 @@ func buildSteps(h model.Hostname) []model.Step {
 // needsSNIStep 判定该域名是否存在需要源站额外配置 SNI 路由的回源。
 func needsSNIStep(h model.Hostname) bool {
 	for _, r := range h.Routes {
-		if r.Origin != nil && r.Origin.NeedsSNIRoute() {
+		if t := r.Target(); t != nil && t.NeedsSNIRoute() {
 			return true
 		}
 	}

@@ -316,11 +316,11 @@ func applyCleanup(ctx context.Context, h model.Hostname, confirm bool) (string, 
 	return fmt.Sprintf("已删除 %d 条被遮蔽的记录", len(shadowed)), nil
 }
 
-// findOrigin 在该域名的线路里找出指定类型的回源。
+// findOrigin 在该域名的线路里找出指定类型的落点, 引用回源与内联填值一视同仁。
 func findOrigin(h model.Hostname, kind string) *model.Origin {
 	for _, r := range h.Routes {
-		if r.Origin != nil && r.Origin.Kind == kind {
-			return r.Origin
+		if t := r.Target(); t != nil && t.Kind == kind {
+			return t
 		}
 	}
 	return nil

@@ -83,6 +83,30 @@ func (c *Client) CountDomains(ctx context.Context) (uint64, error) {
 	return *resp.Response.DomainCountInfo.AllTotal, nil
 }
 
+// ListDomainNames 列出该账号下的域名, 供界面直接选而不是手打。
+func (c *Client) ListDomainNames(ctx context.Context) ([]string, error) {
+	req := dnspod.NewDescribeDomainListRequest()
+	req.Limit = common.Int64Ptr(3000)
+
+	resp, err := c.api.DescribeDomainListWithContext(ctx, req)
+	if err != nil {
+		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {
+			return nil, fmt.Errorf("%s %s", sdkErr.Code, sdkErr.Message)
+		}
+		return nil, err
+	}
+	if resp.Response == nil {
+		return nil, nil
+	}
+	names := make([]string, 0, len(resp.Response.DomainList))
+	for _, d := range resp.Response.DomainList {
+		if d != nil && d.Name != nil {
+			names = append(names, *d.Name)
+		}
+	}
+	return names, nil
+}
+
 // Record 是一条解析记录。
 type Record struct {
 	Name    string
