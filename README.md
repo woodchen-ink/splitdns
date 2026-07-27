@@ -26,6 +26,13 @@ Cloudflare 的权威 DNS 不支持普通记录按地区返回不同答案，而�
 
 ## 快速开始
 
+**桌面版（推荐）**：到 [Releases](https://github.com/woodchen-ink/splitdns/releases) 下载绿色版压缩包，解压双击即用。
+不需要安装、不需要域名、不需要登录，密钥只存在你自己机器上。
+
+数据放在 exe 同级的 `data/` 目录，整个文件夹拷走就能带走全部配置；exe 放在 Program Files 这类只读位置时会自动回退到用户配置目录。
+
+**服务端版**（要跑定时巡检、或者多台机器共用一份配置时才需要）：
+
 ```bash
 docker compose up -d --build
 ```
@@ -59,9 +66,11 @@ docker compose up -d --build
 
 「域名 → 新增域名」：
 
-- 访问域名 `i.czl.net`，父区 `czl.net`，SaaS 区 `20200511.xyz`，DNSPod 域名留空（默认与访问域名相同）
-- 三个凭据分别选上；SaaS 区和父区同账号时「SaaS 区凭据」选「与父区相同」
-- 线路：`默认 → rs2000 回退源`、`境内 → EdgeOne 国内`
+- 访问域名填 `i.czl.net`，选好 Cloudflare 凭据——**父区会自动推导**（拿访问域名去凭据可见的 zone 里找最长后缀匹配），填完就显示推导结果
+- SaaS 区从下拉里选 `20200511.xyz`；不走 CF 就选「不使用 CF for SaaS」
+- 选 DNSPod 凭据
+- 线路：`默认 → rs2000 回退源`、`境内 → EdgeOne 国内`。线路落点可以引用「回源」库里的条目，也可以**直接填**——
+  EdgeOne 那种一个域名一个 CNAME、不会复用的落点，不必先去回源库建条目
 
 **「默认」线是兜底**。只配境内 + 境外，识别不出归属的解析器会一条记录都拿不到，所以把覆盖面最广的那条挂在「默认」上。
 
@@ -92,9 +101,11 @@ docker exec splitdns /app/splitdns check
 
 有 error 级问题时退出码非 0，可以直接塞进 cron 或监控。只查某几个：`splitdns check i.czl.net ai.czl.net`。
 
-### 访问控制
+### 访问控制（仅服务端版）
 
-应用自己不做登录，认证交给 Cloudflare Access。配上这两个环境变量后，应用会校验边缘下发的身份 JWT：
+桌面版不监听端口、也没有鉴权——请求由 Wails 直接交给 handler，没有任何网络入口。
+
+服务端版自己不做登录，认证交给 Cloudflare Access。配上这两个环境变量后，应用会校验边缘下发的身份 JWT：
 
 ```bash
 CF_ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com
@@ -113,4 +124,10 @@ cd server && go run .
 cd web && npm run dev
 ```
 
-前端静态导出后由 Go 一并托管，生产不跑 Node。
+桌面版：
+
+```bash
+cd desktop && wails dev
+```
+
+前端静态导出后由 Go 一并托管，生产不跑 Node。桌面版把同一份产物嵌进 exe，窗口里跑的还是这套 handler。

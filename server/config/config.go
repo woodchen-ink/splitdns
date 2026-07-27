@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -55,6 +56,17 @@ func Load() (*Config, error) {
 				"确实跑在受控网络的反代后面时, 设 ALLOW_INSECURE_BIND=true 显式放行", c.BindHost)
 	}
 	return c, nil
+}
+
+// Desktop 构造桌面版配置。
+// 桌面版没有环境变量可依赖, 也不需要监听端口与鉴权 —— 请求由 Wails 直接交给 handler,
+// 根本不开 TCP 端口, 所以"未配 Access 就只能听回环"那条约束在这里不适用。
+func Desktop(dataDir, staticRoot string) *Config {
+	return &Config{
+		DatabasePath: filepath.Join(dataDir, "splitdns.db"),
+		Timezone:     envStr("TZ", "Asia/Shanghai"),
+		StaticRoot:   staticRoot,
+	}
 }
 
 // AccessEnabled 判定是否启用 Cloudflare Access JWT 校验。
