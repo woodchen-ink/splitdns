@@ -37,6 +37,12 @@ func RefreshPlan(ctx context.Context, planID uint) (*PlanView, error) {
 
 	for i := range plan.Steps {
 		step := &plan.Steps[i]
+
+		// 跳过是终态: 用户明确说了这一步不做 (比如回退源还有别人在用),
+		// 再去验证只会把它翻回未完成, 也不该拦着整条流程收尾
+		if step.Status == model.StepSkipped {
+			continue
+		}
 		refreshInstruction(step, *h, report.Snapshot)
 
 		if !step.Verifiable {
@@ -99,6 +105,10 @@ func loadPlan(planID uint) (*model.Plan, error) {
 // refreshInstruction 把只有运行时才知道的值 (CF 给的 TXT、DNSPod 分配的 NS、各线路目标)
 // 填进步骤指令里。这些值在建流程时还不存在, 必须每次巡检后重算。
 func refreshInstruction(step *model.Step, h model.Hostname, snap model.Snapshot) {
+	if strings.HasPrefix(step.Key, teardownPrefix) {
+		refreshTeardownInstruction(step, h, snap)
+		return
+	}
 	zone := h.DNSPodZone()
 
 	switch step.Key {
@@ -231,6 +241,9 @@ func isIPv4(s string) bool {
 // stepSatisfied 判定某一步是否已经在真实环境里生效。
 // Key 未登记时返回不可判定, 由调用方保持原状并提示人工确认, 不静默当成通过。
 func stepSatisfied(key string, h model.Hostname, snap model.Snapshot) (ok bool, known bool, reason string) {
+	if strings.HasPrefix(key, teardownPrefix) {
+		return teardownSatisfied(key, snap)
+	}
 	switch key {
 	case "saas.fallback_origin":
 		if snap.FallbackOriginStatus == "active" {
@@ -355,5 +368,21 @@ func MarkStepStarted(stepID uint) error {
 	now := timex.Now()
 	return database.DB.Model(&model.Step{}).Where("id = ?", stepID).
 		Updates(map[string]any{"status": model.StepWaiting, "started_at": now}).Error
+}
+
+// MarkStepSkipped 记录用户决定不做这一步。
+// 主要给拆除流程用: 想留着 DNSPod 域名、回退源还有别的主机名在用, 都是合理的"不做"。
+func MarkStepSkipped(stepID uint) error {
+	return database.DB.Model(&model.Step{}).Where("id = ?", stepID).
+		Updates(map[string]any{"status": model.StepSkipped, "last_error": ""}).Error
+}
+
+// MarkStepReset 把步骤退回未开始, 下一次巡检重新判定它。
+// 用来撤销误点的跳过 —— 跳过本身什么也没做, 不该是个单向门。
+func MarkStepReset(stepID uint) error {
+	return database.DB.Model(&model.Step{}).Where("id = ?", stepID).
+		Updates(map[string]any{
+			"status": model.StepPending, "last_error": "", "started_at": nil, "done_at": nil,
+		}).Error
 }
 

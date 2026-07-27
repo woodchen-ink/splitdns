@@ -21,7 +21,22 @@ func evaluate(h model.Hostname, snap model.Snapshot) []model.Finding {
 	out = append(out, checkTXT(h, snap)...)
 	out = append(out, checkRoutes(h, snap)...)
 	out = append(out, checkZoneEnabled(snap)...)
+	out = append(out, checkZoneExists(snap)...)
 	return out
+}
+
+// checkZoneExists 报告域名压根不在 DNSPod 上。
+// 与"读取失败"分开报: 前者照着流程加一下就行, 后者是凭据 / 网络的问题, 处理方式完全不同。
+func checkZoneExists(snap model.Snapshot) []model.Finding {
+	if !snap.DNSPodMissing {
+		return nil
+	}
+	return []model.Finding{{
+		Level: model.LevelError,
+		Code:  "dnspod.missing",
+		Title: "DNSPod 上查不到这个域名",
+		Fix:   "在配置流程的「在 DNSPod 添加域名」那一步点自动执行",
+	}}
 }
 
 // checkDelegation 校验 CF 父区的 NS 委派是否存在, 且与 DNSPod 实际分配的 NS 一致。

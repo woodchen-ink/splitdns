@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,6 +40,26 @@ type envelope struct {
 type apiError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+// APIError 是一次 CF 请求的失败结果, 带上 HTTP 状态码。
+// 删除类操作要能把"这东西本来就不在了"当成功, 靠匹配错误文案判定太脆, 所以留出状态码。
+type APIError struct {
+	Status int
+	Errors []apiError
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("CF 返回错误 (HTTP %d): %s", e.Status, joinErrors(e.Errors))
+}
+
+// IsNotFound 判定错误是不是"要操作的东西不存在"。
+func IsNotFound(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Status == http.StatusNotFound
 }
 
 // get 发起一次 GET 请求并把 result 解到 out。
@@ -90,7 +111,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("解析 CF 响应失败 (HTTP %d): %w", resp.StatusCode, err)
 	}
 	if !env.Success {
-		return fmt.Errorf("CF 返回错误 (HTTP %d): %s", resp.StatusCode, joinErrors(env.Errors))
+		return &APIError{Status: resp.StatusCode, Errors: env.Errors}
 	}
 	if out == nil || len(env.Result) == 0 || string(env.Result) == "null" {
 		return nil

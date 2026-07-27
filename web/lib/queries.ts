@@ -2,6 +2,8 @@
 
 export const queryKeys = {
   hostnames: (keyword: string) => ["config", "hostnames", keyword] as const,
+  // 前缀 key: 域名增删后让所有关键字下的列表一起失效
+  hostnamesAll: () => ["config", "hostnames"] as const,
   hostname: (id: number) => ["config", "hostname", id] as const,
   origins: () => ["config", "origins"] as const,
   credentials: () => ["config", "credentials"] as const,

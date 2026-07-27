@@ -6,16 +6,27 @@ import (
 	"net/http"
 
 	"github.com/woodchen-ink/go-web-utils/resputil"
+	"github.com/woodchen-ink/splitdns/server/model"
 	"github.com/woodchen-ink/splitdns/server/service"
 )
 
-// CreatePlan POST /api/hostnames/{id}/plan 为某个域名建 (或复用) 配置流程
+// CreatePlan POST /api/hostnames/{id}/plan 为某个域名建 (或复用) 流程
+// body 里的 kind 决定是配置流程还是拆除流程, 不传按配置流程处理
 func CreatePlan(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	plan, err := service.CreatePlan(id)
+	var req struct {
+		Kind string `json:"kind"`
+	}
+	// 请求体可以为空, 解析失败一律按默认的配置流程走
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Kind == "" {
+		req.Kind = model.PlanSetup
+	}
+
+	plan, err := service.CreatePlan(id, req.Kind)
 	if err != nil {
 		resputil.Fail(w, 500, err.Error())
 		return
@@ -84,7 +95,8 @@ func ApplyStep(w http.ResponseWriter, r *http.Request) {
 }
 
 // MarkStep POST /api/plans/{id}/mark 记录用户对某步的手动操作
-// action=started 表示"我照做了, 开始等生效"; action=done 表示"程序验不了的步骤我确认完成"
+// action=started 表示"我照做了, 开始等生效"; action=done 表示"程序验不了的步骤我确认完成";
+// action=skip 表示"这一步不做", 之后不再验证也不阻塞流程收尾; action=reset 撤销跳过
 func MarkStep(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -105,8 +117,12 @@ func MarkStep(w http.ResponseWriter, r *http.Request) {
 		err = service.MarkStepDone(req.StepID)
 	case "started":
 		err = service.MarkStepStarted(req.StepID)
+	case "skip":
+		err = service.MarkStepSkipped(req.StepID)
+	case "reset":
+		err = service.MarkStepReset(req.StepID)
 	default:
-		resputil.Fail(w, 400, "action 只能是 started 或 done")
+		resputil.Fail(w, 400, "action 只能是 started / done / skip / reset")
 		return
 	}
 	if err != nil {

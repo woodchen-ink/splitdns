@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // zone 是 zone 列表接口需要的最小字段集。
@@ -38,6 +39,8 @@ type DNSRecord struct {
 	TTL int `json:"ttl"`
 	// Priority 仅 MX / SRV 有值
 	Priority *int `json:"priority"`
+	// Comment 记录备注, 本工具建的记录都会写上来源
+	Comment string `json:"comment"`
 }
 
 // ListRecords 按名字 (可选类型) 查记录。name 传完整主机名, 不是相对名。
@@ -54,6 +57,25 @@ func (c *Client) ListRecords(ctx context.Context, zoneID, name, recordType strin
 		return nil, err
 	}
 	return records, nil
+}
+
+// RecordsByComment 按备注前缀查记录。
+// 本工具写进 CF 的记录名字和类型各不相同, 只有备注是稳定的, 拆除时靠它认出自己留下的痕迹。
+func (c *Client) RecordsByComment(ctx context.Context, zoneID, prefix string) ([]DNSRecord, error) {
+	q := url.Values{"per_page": {"100"}, "comment.startswith": {prefix}}
+	var records []DNSRecord
+	if err := c.get(ctx, "/zones/"+zoneID+"/dns_records", q, &records); err != nil {
+		return nil, err
+	}
+	// CF 若不认这个过滤参数就会把整个区的记录全返回, 本地再筛一遍,
+	// 免得把别人的记录当成本工具的痕迹删掉
+	out := make([]DNSRecord, 0, len(records))
+	for _, r := range records {
+		if strings.HasPrefix(r.Comment, prefix) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // ShadowedRecords 返回被指定委派点遮蔽的记录。

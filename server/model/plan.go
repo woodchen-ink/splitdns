@@ -22,7 +22,16 @@ const (
 	StepSkipped = "skipped" // 当前配置下不适用
 )
 
-// Plan 是一次"把某个访问域名配置到位"的流程实例。
+// 流程类型。两种流程共用同一套步骤机制 (持久化、巡检验证、退回),
+// 差别只在步骤清单和每步做什么。
+const (
+	// PlanSetup 把访问域名配置到位
+	PlanSetup = "setup"
+	// PlanTeardown 反过来把各平台上的痕迹一处处撤掉
+	PlanTeardown = "teardown"
+)
+
+// Plan 是一次"把某个访问域名配置到位"或"把它拆干净"的流程实例。
 // 持久化是为了让用户关掉页面后能接着走 —— 这个流程里有多步需要等 DNS 生效, 天然跨会话。
 type Plan struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
@@ -30,6 +39,8 @@ type Plan struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 	HostnameID uint      `gorm:"column:hostname_id;index;not null" json:"hostnameId"`
 
+	// Kind setup / teardown; 早于这个字段的数据里是空串, 一律按 setup 解释
+	Kind string `gorm:"column:kind;size:16;not null;default:setup" json:"kind"`
 	// Status running / done
 	Status string `gorm:"column:status;size:16;not null;default:running" json:"status"`
 
@@ -37,6 +48,14 @@ type Plan struct {
 }
 
 func (Plan) TableName() string { return "plan" }
+
+// PlanKind 返回流程类型, 兼容加上这一列之前建的流程。
+func (p Plan) PlanKind() string {
+	if p.Kind == "" {
+		return PlanSetup
+	}
+	return p.Kind
+}
 
 // Step 是流程中的一步。Key 是稳定标识, 验证逻辑按 Key 分派;
 // 前端按 Key 找不到专属渲染时回落通用渲染, 后端新增步骤不需要前端同步发版。

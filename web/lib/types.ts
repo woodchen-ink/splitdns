@@ -92,9 +92,13 @@ export interface CustomHostnameState {
 }
 
 export interface Snapshot {
+  // fetchErrors 非空表示对应平台这轮没读到, 状态是未知而不是"空"
+  fetchErrors: Record<string, string> | null;
   delegation: string[] | null;
   dnspodNameservers: string[] | null;
+  dnspodMissing: boolean;
   shadowedRecords: string[] | null;
+  parentLeftovers: string[] | null;
   fallbackOrigin: string;
   fallbackOriginStatus: string;
   customHostname: CustomHostnameState;
@@ -128,9 +132,13 @@ export interface Step {
   verifiable: boolean;
 }
 
+// setup 把域名配到位, teardown 反过来把各平台上的痕迹一处处撤掉
+export type PlanKind = "setup" | "teardown";
+
 export interface Plan {
   id: number;
   hostnameId: number;
+  kind: PlanKind | string;
   status: string;
   steps: Step[];
 }

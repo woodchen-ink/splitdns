@@ -26,17 +26,27 @@
 - `hostname` — 访问域名, 记录它在 CF 父区 / CF SaaS 区 / DNSPod 三处的落点
 - `route` — `访问域名 × 线路 → 落点` 的绑定。落点二选一: 引用 `origin`, 或直接内联填值 (`origin_id` 为 0),
   判定统一走 `Route.Target()`
-- `plan` / `step` — 配置流程实例与步骤。持久化是因为流程中多步要等 DNS 生效, 天然跨会话
+- `plan` / `step` — 流程实例与步骤。持久化是因为流程中多步要等 DNS 生效, 天然跨会话。
+  `plan.kind` 分 `setup` (配置到位) 与 `teardown` (把痕迹撤掉), 同一域名两条流程可以并存;
+  这一列之前的数据是空串, 一律按 `setup` 解释 (`Plan.PlanKind()`)
 
 `origin.kind` 与 `step.key` 都是开放式取值: 消费侧按模式识别 + 兜底处理, 新增取值不需要前端同步发版。
 
 ## 核心行为
 
 - **巡检** (`service/inspect.go` + `check*.go`): 一次拉齐三个平台的实际状态, 再按规则判定。
-  任何一处拉取失败都转成 Finding, 不让整个报告消失
+  任何一处拉取失败都转成 Finding, 不让整个报告消失; 同时记进 `Snapshot.FetchErrors`,
+  **判定层必须区分"确实没有"和"根本没读到"** —— 两者在快照里长得一模一样, 混淆会让拆除流程谎报清干净了
 - **流程** (`service/plan*.go`): 步骤分 `manual` / `auto` / `wait`。
   能自动做的直接调 API, 做完仍然走一次巡检验证 —— 平台接口返回 200 不等于配置已经生效
-- **不可逆操作**: 只有"清理父区被遮蔽的记录"会删数据, 未带 `confirm` 时只返回待删清单并报 `ErrNeedConfirm`
+- **拆除流程** (`service/plan_teardown*.go`, `step.key` 前缀 `teardown.`): 按 撤委派 → 清 DNSPod 记录 →
+  删 DNSPod 域名 → 删自定义主机名 → 清回退源 → 清父区验证记录 的顺序逐步撤。
+  **第一步必须是撤委派**: 反过来先删 DNSPod 域名, 委派还指着不再托管它的 NS, 解析器拿到 SERVFAIL 且会一直重试。
+  删本地记录不在流程里 (删完流程自己也没了), 走 `DELETE /api/hostnames/{id}`
+- **不可逆操作**: 清理父区被遮蔽的记录, 以及全部拆除步骤。未带 `confirm` 时只返回待删清单并报 `ErrNeedConfirm`,
+  清单必须逐条列出来, 只报"有 N 条"等于让人闭眼点确认
+- **跳过**: `step.status = skipped` 是终态, 不再验证也不阻塞流程收尾。给拆除用 ——
+  想留着 DNSPod 域名、回退源还有别人在用, 都是合理的"这步不做"
 - **验证退回**: 曾经通过的步骤在巡检发现线上被改动后会退回 `waiting`, 不会一直显示完成
 - **数据搬家** (`service/backup.go`): 导出走 `VACUUM INTO` 取一致性快照; 导入前校验文件头与必备表,
   替换前另存带时间戳的备份, 写入失败自动回滚
@@ -48,7 +58,12 @@
 - **DNSPod 免费版 TTL 最低 600**, 更小的值接口直接拒; 线路只有 默认 / 境内 / 境外
 - **DNSPod 新加的域名默认暂停**, 不启用解析则记录全对也不生效; 状态判定用黑名单 (只有 PAUSE/SPAM 算停),
   白名单只认 `ENABLE` 会把 `LOCK` 和小写误判
-- **腾讯云同一语义的错误码挂在不同前缀下** (`InvalidParameter.` / `FailedOperation.`), 按后缀匹配
+- **腾讯云同一语义的错误码挂在不同前缀下** (`InvalidParameter.` / `FailedOperation.`), 按后缀匹配;
+  "域名不存在"因此收敛成 `dnspod.ErrDomainNotFound`, 不要把它和网络 / 权限错误混在一起判
+- **CF for SaaS 的回退源是整个区共享的**: 区里还有别的自定义主机名时删掉它, 那些主机名会一起失效。
+  拆除前必须先数一遍 (`ListCustomHostnames`), 有别人就拒绝执行而不是让用户确认一下就删
+- **本工具写进 CF 的记录都带 `splitdns` 开头的备注**: 拆除时靠 `comment.startswith` 认回自己的痕迹,
+  名字和类型都不稳定, 只有备注是。新增写记录的地方备注也必须以 `cfCommentPrefix` 开头
 - **WebView2 里 multipart 上传的文件部分是空的**: 上传走裸请求体, 别用 `FormData`
 
 ## 前端要点
@@ -77,6 +92,10 @@ cd web && npm run build && npx eslint app components lib
 ```bash
 cd desktop && wails build -platform windows/amd64 -webview2 embed -skipbindings -nsis
 ```
+
+Windows 本地出包也可以直接双击仓库根的 `build-installer.bat` (查依赖 → 构建 → 打开产物目录)。
+**这个文件必须保持 GBK 编码**: cmd.exe 按活动代码页逐行读批处理, 存成 UTF-8 会把中文行拦腰截断当命令执行,
+加 `chcp 65001` 只会更糟 (改代码页会打乱 cmd 对文件的字节定位)。
 
 ```bash
 cd desktop && wails build -platform darwin/universal -skipbindings

@@ -57,6 +57,42 @@ func (c *Client) EnableDomain(ctx context.Context, domain string) error {
 	return nil
 }
 
+// DeleteDomain 从 DNSPod 删掉域名, 它下面的解析记录会一并消失。
+// 域名本来就不在时当成功 —— 拆除流程要能重复执行, 不该被"已经删过了"卡住。
+func (c *Client) DeleteDomain(ctx context.Context, domain string) error {
+	req := dnspod.NewDeleteDomainRequest()
+	req.Domain = common.StringPtr(domain)
+
+	if _, err := c.api.DeleteDomainWithContext(ctx, req); err != nil {
+		wrapped := wrapDomainErr("删除域名", domain, err)
+		if errors.Is(wrapped, ErrDomainNotFound) {
+			return nil
+		}
+		return wrapped
+	}
+	return nil
+}
+
+// DeleteRecord 删掉一条解析记录。recordID 取自 ListRecords ——
+// 同一个主机记录在不同线路上有多条, 只有 ID 能精确定位到要删的那条。
+func (c *Client) DeleteRecord(ctx context.Context, domain string, recordID uint64) error {
+	req := dnspod.NewDeleteRecordRequest()
+	req.Domain = common.StringPtr(domain)
+	req.RecordId = common.Uint64Ptr(recordID)
+
+	if _, err := c.api.DeleteRecordWithContext(ctx, req); err != nil {
+		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {
+			// 记录已经不在了对删除来说就是成功, 删到一半重来时不该卡住
+			if strings.Contains(sdkErr.Code, "RecordIdInvalid") || strings.Contains(sdkErr.Code, "NoDataOfRecord") {
+				return nil
+			}
+			return fmt.Errorf("删除 %s 的记录 %d 失败: %s %s", domain, recordID, sdkErr.Code, sdkErr.Message)
+		}
+		return fmt.Errorf("删除 %s 的记录 %d 失败: %w", domain, recordID, err)
+	}
+	return nil
+}
+
 // OwnershipTXT 是 DNSPod 要求用来证明域名归属的 TXT 记录。
 // Domain 是要加记录的主域名, FQDN 是完整记录名。
 type OwnershipTXT struct {

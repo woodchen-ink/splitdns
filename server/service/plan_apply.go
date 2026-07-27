@@ -14,6 +14,16 @@ import (
 // ErrNeedConfirm 表示该步骤会造成不可逆变更, 需要调用方带确认标记再来一次。
 var ErrNeedConfirm = fmt.Errorf("需要确认")
 
+// 本工具写进 CF 的记录都带这个备注前缀。
+// 记录的名字和类型各不相同, 拆除时只有备注能稳定认出"这条是我建的",
+// 因此下面几个备注文案必须都以 cfCommentPrefix 开头。
+const (
+	cfCommentPrefix   = "splitdns"
+	commentFallback   = cfCommentPrefix + " 自动创建的回退源"
+	commentOwnership  = cfCommentPrefix + ": DNSPod 域名归属验证"
+	commentDelegation = cfCommentPrefix + " 委派"
+)
+
 // ApplyStep 让程序替用户执行某一步。执行完不直接判成功, 仍然走一次验证 ——
 // 平台接口返回 200 不等于配置已经生效, 生效与否只认巡检结果。
 // action 目前只有 cf.cleanup 用到: 传 "migrate" 表示先把还在服务的记录搬到 DNSPod 再删。
@@ -36,6 +46,11 @@ func ApplyStep(ctx context.Context, planID, stepID uint, confirm bool, action st
 	}
 	if step == nil {
 		return "", fmt.Errorf("流程 %d 下没有步骤 %d", planID, stepID)
+	}
+
+	// 拆除步骤全部按删除时的实时状态动手 (要拿记录 ID), 不吃巡检快照, 省一轮拉取
+	if strings.HasPrefix(step.Key, teardownPrefix) {
+		return applyTeardownStep(ctx, step.Key, *h, confirm)
 	}
 
 	snap := Inspect(ctx, *h).Snapshot
@@ -94,7 +109,7 @@ func applyFallbackOrigin(ctx context.Context, h model.Hostname, snap model.Snaps
 			Name:    origin.Value,
 			Content: origin.Address,
 			Proxied: true,
-			Comment: "splitdns 自动创建的回退源",
+			Comment: commentFallback,
 		})
 		if err != nil {
 			return "", err
@@ -229,7 +244,7 @@ func verifyDNSPodOwnership(ctx context.Context, h model.Hostname, dp *dnspod.Cli
 			Type:    "TXT",
 			Name:    txt.FQDN,
 			Content: txt.Value,
-			Comment: "splitdns: DNSPod 域名归属验证",
+			Comment: commentOwnership,
 		})
 		if err != nil {
 			return "", fmt.Errorf("在 %s 写验证 TXT 失败: %w", txt.Domain, err)
@@ -347,7 +362,7 @@ func applyDelegation(ctx context.Context, h model.Hostname, snap model.Snapshot)
 			Type:    "NS",
 			Name:    h.Hostname,
 			Content: ns,
-			Comment: "splitdns 委派",
+			Comment: commentDelegation,
 		})
 		if err != nil {
 			return "", err
@@ -427,6 +442,15 @@ func deleteShadowed(ctx context.Context, cf *cloudflare.Client, zoneID string, s
 		}
 	}
 	return fmt.Sprintf("已从父区删除 %d 条被遮蔽的记录", len(shadowed)), nil
+}
+
+// needConfirm 把待删清单包装成需要二次确认的错误。
+// 清单必须原样回给用户: 删除都是不可逆的, 只报"有 N 条"等于让人闭眼点确认。
+func needConfirm(header string, lines []string) error {
+	if len(lines) == 0 {
+		return fmt.Errorf("%w: %s", ErrNeedConfirm, header)
+	}
+	return fmt.Errorf("%w: %s\n  %s", ErrNeedConfirm, header, strings.Join(lines, "\n  "))
 }
 
 // findOrigin 在该域名的线路里找出指定类型的落点, 引用回源与内联填值一视同仁。

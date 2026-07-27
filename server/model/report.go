@@ -35,8 +35,21 @@ type Finding struct {
 	Fix string `json:"fix"`
 }
 
+// 巡检时拉取失败的归属。拉不到 ≠ 不存在: 拆除流程必须区分这两者,
+// 否则一次网络抖动就会把"没读到"当成"已经删干净"。
+const (
+	FetchParent    = "parent"
+	FetchLeftovers = "leftovers"
+	FetchSaaS      = "saas"
+	FetchDNSPod    = "dnspod"
+)
+
 // Snapshot 是一个访问域名在三个平台上的实际状态, 由后端聚合完毕, 前端直接渲染。
 type Snapshot struct {
+	// FetchErrors 本次巡检没能读到的部分, 键取上面几个常量。
+	// 这里非空说明对应平台的状态是未知而不是"空", 判定时不能当成"已经没有了"
+	FetchErrors map[string]string `json:"fetchErrors"`
+
 	// Delegation CF 父区里该子域名的 NS 委派记录值
 	Delegation []string `json:"delegation"`
 	// DNSPodNameservers DNSPod 实际分配给该域名的 NS
@@ -45,8 +58,13 @@ type Snapshot struct {
 	DNSPodEnabled bool `json:"dnspodEnabled"`
 	// DNSPodStatus DNSPod 返回的原始域名状态, 判定存疑时用它对照
 	DNSPodStatus string `json:"dnspodStatus"`
+	// DNSPodMissing 这个腾讯云账号下查不到该域名 —— 还没添加, 或者已经拆掉。
+	// 与"读取失败"区分开: 拆除流程靠它确认域名真的删干净了
+	DNSPodMissing bool `json:"dnspodMissing"`
 	// ShadowedRecords CF 父区里被委派遮蔽的记录 (名字 + 类型)
 	ShadowedRecords []string `json:"shadowedRecords"`
+	// ParentLeftovers CF 父区里由本工具写下的辅助记录 (如 DNSPod 归属验证 TXT), 不含委派 NS
+	ParentLeftovers []string `json:"parentLeftovers"`
 
 	// FallbackOrigin SaaS 区当前的回退源主机名
 	FallbackOrigin string `json:"fallbackOrigin"`

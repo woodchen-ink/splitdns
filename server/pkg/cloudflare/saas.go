@@ -13,9 +13,13 @@ type FallbackOrigin struct {
 }
 
 // GetFallbackOrigin 读取 SaaS 区当前的回退源。
+// 没设置过回退源是正常状态 (刚启用 SaaS, 或者已经拆掉), 返回零值而不是错误。
 func (c *Client) GetFallbackOrigin(ctx context.Context, zoneID string) (FallbackOrigin, error) {
 	var fo FallbackOrigin
 	err := c.get(ctx, "/zones/"+zoneID+"/custom_hostnames/fallback_origin", nil, &fo)
+	if IsNotFound(err) {
+		return FallbackOrigin{}, nil
+	}
 	return fo, err
 }
 
@@ -53,6 +57,15 @@ type CustomHostname struct {
 	} `json:"ownership_verification"`
 	CustomOriginServer string `json:"custom_origin_server"`
 	CustomOriginSNI    string `json:"custom_origin_sni"`
+}
+
+// ListCustomHostnames 列出 SaaS 区里的自定义主机名, 只取一页。
+// 用途只是判断"除了自己还有没有别人在用这个区的回退源", 不需要精确总数, 因此不翻页。
+func (c *Client) ListCustomHostnames(ctx context.Context, zoneID string) ([]CustomHostname, error) {
+	q := url.Values{"per_page": {"50"}}
+	var list []CustomHostname
+	err := c.get(ctx, "/zones/"+zoneID+"/custom_hostnames", q, &list)
+	return list, err
 }
 
 // FindCustomHostname 在 SaaS 区里按精确主机名查自定义主机名。

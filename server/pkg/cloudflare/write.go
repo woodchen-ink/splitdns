@@ -31,8 +31,32 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, rec NewRecord)
 }
 
 // DeleteRecord 删除一条 DNS 记录。调用方必须先向用户展示待删列表并取得确认。
+// 记录已经不在了当成功: 删到一半失败重来时, 前面删过的不该把整批卡住。
 func (c *Client) DeleteRecord(ctx context.Context, zoneID, recordID string) error {
-	return c.do(ctx, http.MethodDelete, "/zones/"+zoneID+"/dns_records/"+recordID, nil, nil, nil)
+	err := c.do(ctx, http.MethodDelete, "/zones/"+zoneID+"/dns_records/"+recordID, nil, nil, nil)
+	if IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// DeleteCustomHostname 删除自定义主机名, CF 会一并吊销它的证书。
+func (c *Client) DeleteCustomHostname(ctx context.Context, zoneID, hostnameID string) error {
+	err := c.do(ctx, http.MethodDelete, "/zones/"+zoneID+"/custom_hostnames/"+hostnameID, nil, nil, nil)
+	if IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// DeleteFallbackOrigin 清掉 SaaS 区的回退源设置。
+// 这是整个区共享的配置, 调用方必须先确认区里已经没有别的自定义主机名在用它。
+func (c *Client) DeleteFallbackOrigin(ctx context.Context, zoneID string) error {
+	err := c.do(ctx, http.MethodDelete, "/zones/"+zoneID+"/custom_hostnames/fallback_origin", nil, nil, nil)
+	if IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // SetFallbackOrigin 设置 SaaS 区的回退源。origin 必须是该区内一条已存在的橙云记录。

@@ -1,0 +1,3 @@
+# cmd.exe 按字节偏移重读批处理文件, 换成 LF 会让中文行被拦腰截断当命令执行。
+# 不能只靠各人的 core.autocrlf, 这里强制签出为 CRLF。
+*.bat text eol=crlf

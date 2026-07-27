@@ -8,6 +8,7 @@ import type { Hostname } from "@/lib/types";
 import { useMounted } from "@/lib/hooks/use-mounted";
 import { HostnameForm } from "@/components/hostname-form";
 import { PlanWizard } from "@/components/plan-wizard";
+import { TeardownPanel } from "@/components/teardown-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -73,12 +74,17 @@ export function HostnameDetail() {
         <TabsList>
           <TabsTrigger value="plan">配置流程</TabsTrigger>
           <TabsTrigger value="config">域名配置</TabsTrigger>
+          <TabsTrigger value="teardown">拆除</TabsTrigger>
         </TabsList>
         <TabsContent value="plan" className="mt-4">
           <PlanWizard hostnameId={data.id} />
         </TabsContent>
         <TabsContent value="config" className="mt-4">
           <HostnameForm initial={data} />
+        </TabsContent>
+        {/* 面板默认不预挂载, 拆除流程只在真的点进来时才创建, 不会因为打开详情页就凭空多一条 */}
+        <TabsContent value="teardown" className="mt-4">
+          <TeardownPanel hostname={data} />
         </TabsContent>
       </Tabs>
     </div>

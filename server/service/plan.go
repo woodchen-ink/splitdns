@@ -7,28 +7,44 @@ import (
 	"github.com/woodchen-ink/splitdns/server/model"
 )
 
-// CreatePlan 为某个访问域名生成一条配置流程。
-// 已有未完成流程时直接复用, 避免同一个域名并行两套步骤互相打架。
-func CreatePlan(hostnameID uint) (*model.Plan, error) {
+// CreatePlan 为某个访问域名生成一条流程。kind 决定是配置还是拆除, 两者互不干扰:
+// 同一个域名可以同时挂着一条配置流程和一条拆除流程, 各按各的步骤走。
+// 同类型已有未完成流程时直接复用, 避免并行两套步骤互相打架。
+func CreatePlan(hostnameID uint, kind string) (*model.Plan, error) {
 	h, err := HostnameByID(hostnameID)
 	if err != nil {
 		return nil, err
 	}
 
+	var steps []model.Step
+	switch kind {
+	case model.PlanSetup:
+		steps = buildSteps(*h)
+	case model.PlanTeardown:
+		steps = buildTeardownSteps(*h)
+	default:
+		return nil, fmt.Errorf("未知的流程类型 %q", kind)
+	}
+
 	// 用 Find 而不是 First: "还没有流程"是最常见的正常路径,
 	// First 会把它当成 ErrRecordNotFound 记一条错误日志, 纯噪音
 	var existing []model.Plan
-	err = database.DB.Preload("Steps").
-		Where("hostname_id = ? AND status = ?", hostnameID, "running").
-		Limit(1).Find(&existing).Error
-	if err != nil {
+	q := database.DB.Preload("Steps").
+		Where("hostname_id = ? AND status = ?", hostnameID, "running")
+	if kind == model.PlanSetup {
+		// 加上 kind 这一列之前建的流程都是配置流程, 值是空串
+		q = q.Where("kind IN ?", []string{model.PlanSetup, ""})
+	} else {
+		q = q.Where("kind = ?", kind)
+	}
+	if err := q.Limit(1).Find(&existing).Error; err != nil {
 		return nil, fmt.Errorf("查询已有流程失败: %w", err)
 	}
 	if len(existing) > 0 {
 		return &existing[0], nil
 	}
 
-	plan := model.Plan{HostnameID: hostnameID, Status: "running", Steps: buildSteps(*h)}
+	plan := model.Plan{HostnameID: hostnameID, Kind: kind, Status: "running", Steps: steps}
 	if err := database.DB.Create(&plan).Error; err != nil {
 		return nil, fmt.Errorf("创建流程失败: %w", err)
 	}

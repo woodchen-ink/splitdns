@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError, CODE_NEED_CONFIRM, api, postWithMessage } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
-import type { PlanView, Step } from "@/lib/types";
+import type { PlanKind, PlanView, Step } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,15 +27,23 @@ const MODE_LABEL: Record<string, string> = {
   wait: "只需等待",
 };
 
-// PlanWizard 是配置向导。每一步给出精确指令, 能自动做的直接调 API 做,
-// 做完统一靠巡检验证 —— 平台接口返回成功不等于配置已经生效。
-export function PlanWizard({ hostnameId }: { hostnameId: number }) {
+// PlanWizard 驱动一条流程。每一步给出精确指令, 能自动做的直接调 API 做,
+// 做完统一靠巡检验证 —— 平台接口返回成功不等于配置已经生效 (拆除同理, 删干净了才算)。
+// 配置与拆除共用这套渲染, 差别只在步骤内容和拆除步骤允许跳过。
+export function PlanWizard({
+  hostnameId,
+  kind = "setup",
+}: {
+  hostnameId: number;
+  kind?: PlanKind;
+}) {
   const qc = useQueryClient();
   const [planId, setPlanId] = useState<number | null>(null);
+  const teardown = kind === "teardown";
 
   // 进页面即建流程 (已有未完成的会被复用), 顺带巡检一次, 手动做过的步骤直接显示为完成
   const create = useMutation({
-    mutationFn: () => api.post<PlanView>(`/api/hostnames/${hostnameId}/plan`),
+    mutationFn: () => api.post<PlanView>(`/api/hostnames/${hostnameId}/plan`, { kind }),
     onSuccess: (view) => {
       setPlanId(view.plan.id);
       qc.setQueryData(queryKeys.plan(view.plan.id), view);
@@ -45,9 +53,9 @@ export function PlanWizard({ hostnameId }: { hostnameId: number }) {
 
   useEffect(() => {
     create.mutate();
-    // 只在域名变化时重新建流程
+    // 只在域名或流程类型变化时重新建流程
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostnameId]);
+  }, [hostnameId, kind]);
 
   const { data, isFetching, refetch } = useQuery({
     queryKey: queryKeys.plan(planId ?? 0),
@@ -60,22 +68,24 @@ export function PlanWizard({ hostnameId }: { hostnameId: number }) {
   }
 
   const steps = data.plan.steps ?? [];
-  const doneCount = steps.filter((s) => s.status === "done").length;
+  const settled = steps.filter((s) => s.status === "done" || s.status === "skipped").length;
 
   return (
     <div className="space-y-5">
       <div className="border-border/60 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
         <div>
           <p className="text-sm font-medium">
-            进度 {doneCount} / {steps.length}
+            进度 {settled} / {steps.length}
             {data.plan.status === "done" && (
               <Badge variant="secondary" className="ml-2 border-0 bg-emerald-500/12 text-emerald-700 dark:text-emerald-400">
-                全部完成
+                {teardown ? "痕迹已清完" : "全部完成"}
               </Badge>
             )}
           </p>
           <p className="text-muted-foreground mt-1 text-sm">
-            每次刷新都会重新去三个平台核对一遍实际状态
+            {teardown
+              ? "每次刷新都会重新去三个平台核对一遍, 确认这些痕迹是真的没了"
+              : "每次刷新都会重新去三个平台核对一遍实际状态"}
           </p>
         </div>
         <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
@@ -85,19 +95,32 @@ export function PlanWizard({ hostnameId }: { hostnameId: number }) {
 
       <ol className="space-y-3">
         {steps.map((step) => (
-          <StepCard key={step.id} step={step} planId={data.plan.id} />
+          <StepCard key={step.id} step={step} planId={data.plan.id} allowSkip={teardown} />
         ))}
       </ol>
 
-      <Separator />
-      <ReportPanel report={data.report} />
+      {/* 拆除时巡检报告整片都会变红 (记录没了本来就是目的), 展示它只会误导, 状态看每一步自己的结论 */}
+      {!teardown && (
+        <>
+          <Separator />
+          <ReportPanel report={data.report} />
+        </>
+      )}
     </div>
   );
 }
 
 // StepCard 渲染单个步骤。指令用等宽字体原样展示 —— 里面是要照抄进面板的记录值,
 // 排版一乱就容易抄错。
-function StepCard({ step, planId }: { step: Step; planId: number }) {
+function StepCard({
+  step,
+  planId,
+  allowSkip,
+}: {
+  step: Step;
+  planId: number;
+  allowSkip: boolean;
+}) {
   const qc = useQueryClient();
   const [pendingConfirm, setPendingConfirm] = useState<string | null>(null);
   const status = STEP_STATUS[step.status] ?? {
@@ -133,13 +156,15 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
   });
 
   const mark = useMutation({
-    mutationFn: (action: "started" | "done") =>
+    mutationFn: (action: "started" | "done" | "skip" | "reset") =>
       api.post<PlanView>(`/api/plans/${planId}/mark`, { stepId: step.id, action }),
     onSuccess: refreshPlan,
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const done = step.status === "done";
+  // 已完成和已跳过都是终态, 不再显示指令和操作按钮
+  const skipped = step.status === "skipped";
+  const done = step.status === "done" || skipped;
 
   return (
     <li
@@ -160,6 +185,18 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
           <Badge variant="outline" className="font-normal">
             需人工确认
           </Badge>
+        )}
+        {/* 跳过什么也没做, 不该是个单向门 —— 点错了能退回来重新判定 */}
+        {skipped && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={() => mark.mutate("reset")}
+            disabled={mark.isPending}
+          >
+            取消跳过
+          </Button>
         )}
       </div>
 
@@ -186,7 +223,7 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
           <p className="text-sm font-medium text-red-700 dark:text-red-400">
             {pendingAction === "migrate"
               ? "确认后会先把记录搬到 DNSPod, 再从父区删除"
-              : "这一步会删除记录, 确认后不可撤销"}
+              : "确认后立即执行, 不可撤销"}
           </p>
           <pre className="mt-2 overflow-x-auto font-mono text-xs whitespace-pre-wrap">
             {pendingConfirm}
@@ -198,7 +235,7 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
               onClick={() => apply.mutate({ confirm: true, action: pendingAction })}
               disabled={apply.isPending}
             >
-              {pendingAction === "migrate" ? "确认迁移并删除" : "确认删除"}
+              {pendingAction === "migrate" ? "确认迁移并删除" : "确认执行"}
             </Button>
             <Button
               size="sm"
@@ -260,6 +297,17 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
               disabled={mark.isPending}
             >
               确认完成
+            </Button>
+          )}
+          {/* 拆到一半改主意是常见的 (想留着 DNSPod 域名, 或回退源还有别人在用), 跳过后不再验证 */}
+          {allowSkip && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => mark.mutate("skip")}
+              disabled={mark.isPending}
+            >
+              跳过这一步
             </Button>
           )}
         </div>

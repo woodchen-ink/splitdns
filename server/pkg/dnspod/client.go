@@ -2,6 +2,7 @@ package dnspod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -44,17 +45,45 @@ type Domain struct {
 // 腾讯云返回大小写不总一致, 也可能出现文档外的取值, 白名单会把它们全误判成暂停。
 var pausedStatuses = map[string]bool{"PAUSE": true, "SPAM": true}
 
-// DescribeDomain 查询域名基础信息。域名不在该账号下时返回明确错误。
+// ErrDomainNotFound 表示这个腾讯云账号下查不到该域名 —— 还没添加, 或者已经删掉。
+// 单独给一个哨兵值是因为拆除流程要靠它确认域名真的没了,
+// 把网络错误、权限错误一起当成"已删除"会让人以为清干净了。
+var ErrDomainNotFound = errors.New("DNSPod 上查不到这个域名")
+
+// domainNotFoundCodes 是"域名不存在"在腾讯云的几种写法。
+// 同一语义会挂在不同前缀下 (InvalidParameter. / ResourceNotFound. ...), 所以按后缀匹配。
+var domainNotFoundCodes = []string{"NoDataOfDomain", "DomainNotExists", "DomainIsNotExist"}
+
+// isDomainNotFound 判定这个错误码是不是"域名不存在"。
+func isDomainNotFound(code string) bool {
+	for _, suffix := range domainNotFoundCodes {
+		if strings.Contains(code, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// wrapDomainErr 把腾讯云的报错转成带上下文的 error, 域名不存在时统一成 ErrDomainNotFound。
+func wrapDomainErr(action, domain string, err error) error {
+	sdkErr, ok := err.(*terrors.TencentCloudSDKError)
+	if !ok {
+		return fmt.Errorf("%s %s 失败: %w", action, domain, err)
+	}
+	if isDomainNotFound(sdkErr.Code) {
+		return fmt.Errorf("%s %s: %w", action, domain, ErrDomainNotFound)
+	}
+	return fmt.Errorf("%s %s 失败: %s %s", action, domain, sdkErr.Code, sdkErr.Message)
+}
+
+// DescribeDomain 查询域名基础信息。域名不在该账号下时返回 ErrDomainNotFound。
 func (c *Client) DescribeDomain(ctx context.Context, domain string) (*Domain, error) {
 	req := dnspod.NewDescribeDomainRequest()
 	req.Domain = common.StringPtr(domain)
 
 	resp, err := c.api.DescribeDomainWithContext(ctx, req)
 	if err != nil {
-		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {
-			return nil, fmt.Errorf("查询域名 %s 失败: %s %s", domain, sdkErr.Code, sdkErr.Message)
-		}
-		return nil, fmt.Errorf("查询域名 %s 失败: %w", domain, err)
+		return nil, wrapDomainErr("查询域名", domain, err)
 	}
 	if resp.Response == nil || resp.Response.DomainInfo == nil {
 		return nil, fmt.Errorf("查询域名 %s 返回空结果", domain)
@@ -120,6 +149,8 @@ func (c *Client) ListDomainNames(ctx context.Context) ([]string, error) {
 
 // Record 是一条解析记录。
 type Record struct {
+	// ID 删除记录时唯一的定位方式, 同名同类型可以有多条 (不同线路)
+	ID      uint64
 	Name    string
 	Type    string
 	Line    string
@@ -147,9 +178,8 @@ func (c *Client) ListRecords(ctx context.Context, domain string) ([]Record, erro
 				if sdkErr.Code == "ResourceNotFound.NoDataOfRecord" {
 					return out, nil
 				}
-				return nil, fmt.Errorf("查询 %s 解析记录失败: %s %s", domain, sdkErr.Code, sdkErr.Message)
 			}
-			return nil, fmt.Errorf("查询 %s 解析记录失败: %w", domain, err)
+			return nil, wrapDomainErr("查询解析记录", domain, err)
 		}
 		if resp.Response == nil {
 			break
@@ -160,6 +190,7 @@ func (c *Client) ListRecords(ctx context.Context, domain string) ([]Record, erro
 				continue
 			}
 			out = append(out, Record{
+				ID:      derefUint(r.RecordId),
 				Name:    deref(r.Name),
 				Type:    deref(r.Type),
 				Line:    deref(r.Line),
