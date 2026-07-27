@@ -76,6 +76,9 @@ type CustomHostnameState struct {
 	CustomOrigin string `json:"customOrigin"`
 	// CustomOriginSNI 回源 TLS 握手使用的 SNI
 	CustomOriginSNI string `json:"customOriginSni"`
+	// CustomOriginAddress 自定义源服务器那条记录在 SaaS 区里指向的地址,
+	// 用来告诉用户 SNI 路由要加在哪台机器上
+	CustomOriginAddress string `json:"customOriginAddress"`
 	// OwnershipTXT CF 要求的归属验证 TXT
 	OwnershipTXT TXTRequirement `json:"ownershipTxt"`
 	// DCVTXT CF 要求的证书 DCV TXT; 证书带通配符 SAN 时会有多条同名不同值的记录

@@ -148,7 +148,54 @@ func refreshInstruction(step *model.Step, h model.Hostname, snap model.Snapshot)
 		step.Instruction = fmt.Sprintf(
 			"到 CF 的 %s 区删掉这些记录, 它们已经被委派遮蔽、一条都不生效:\n  %s",
 			h.ParentZone, strings.Join(snap.ShadowedRecords, "\n  "))
+
+	case "origin.sni_route":
+		step.Instruction = sniRouteInstruction(h, snap)
 	}
+}
+
+// sniRouteInstruction 生成 SNI 路由那一步的指令。
+// 这步程序验不了, 所以指令必须具体到"哪台机器、加哪个名字、怎么自检",
+// 光说"给 SNI 挂个 router"等于把活儿又扔回给人。
+func sniRouteInstruction(h model.Hostname, snap model.Snapshot) string {
+	// CF 上实际生效的值优先, 没有再退回配置值 —— 前者才是回源时真正握手用的名字
+	sni := snap.CustomHostname.CustomOriginSNI
+	origin := snap.CustomHostname.CustomOrigin
+	if origin == "" {
+		if o := findOrigin(h, model.OriginSaaSCustom); o != nil {
+			origin = o.Value
+			sni = o.SNI
+		}
+	}
+	if sni == "" {
+		sni = origin
+	}
+	if origin == "" {
+		return "这个域名当前没有自定义源服务器, 这一步可以直接确认完成。"
+	}
+
+	addr := snap.CustomHostname.CustomOriginAddress
+	where := fmt.Sprintf("%s 指向的那台机器", origin)
+	if addr != "" {
+		where = fmt.Sprintf("%s (%s) 那台机器", origin, addr)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "CF 回源到自定义源服务器时, Host 头是 %s, 但 TLS 握手用的 SNI 是 %s。\n", h.Hostname, sni)
+	b.WriteString("源站上的 Traefik / Nginx 按名字路由, 匹配不到就直接 403 —— 跟证书、跟后端服务都没关系。\n\n")
+	fmt.Fprintf(&b, "要做的事: 到 %s 上, 给 %s 这个名字加一条路由\n", where, sni)
+	fmt.Fprintf(&b, "  Traefik: 加一个 rule 为 Host(`%s`) 的 router, service 指向哪个都行\n", sni)
+	fmt.Fprintf(&b, "  Nginx:   加一个 server_name 为 %s 的 server 块\n", sni)
+	b.WriteString("指向哪个服务、有没有证书都无所谓, 只要它认得这个名字。\n\n")
+
+	b.WriteString("加完自检 (返回不是 403 就算通了):\n")
+	if addr != "" {
+		fmt.Fprintf(&b, "  curl -sI --resolve %s:443:%s https://%s/\n", sni, addr, sni)
+	} else {
+		fmt.Fprintf(&b, "  curl -sI https://%s/\n", sni)
+	}
+	b.WriteString("\n这一步程序无法自动验证, 确认没问题后点「确认完成」。")
+	return b.String()
 }
 
 // recordTypeFor 按落点值形态推断该建什么类型的记录: 像 IP 就是 A/AAAA, 否则 CNAME。
