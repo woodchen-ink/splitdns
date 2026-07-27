@@ -15,12 +15,17 @@ func CreatePlan(hostnameID uint) (*model.Plan, error) {
 		return nil, err
 	}
 
-	var existing model.Plan
+	// 用 Find 而不是 First: "还没有流程"是最常见的正常路径,
+	// First 会把它当成 ErrRecordNotFound 记一条错误日志, 纯噪音
+	var existing []model.Plan
 	err = database.DB.Preload("Steps").
 		Where("hostname_id = ? AND status = ?", hostnameID, "running").
-		First(&existing).Error
-	if err == nil {
-		return &existing, nil
+		Limit(1).Find(&existing).Error
+	if err != nil {
+		return nil, fmt.Errorf("查询已有流程失败: %w", err)
+	}
+	if len(existing) > 0 {
+		return &existing[0], nil
 	}
 
 	plan := model.Plan{HostnameID: hostnameID, Status: "running", Steps: buildSteps(*h)}

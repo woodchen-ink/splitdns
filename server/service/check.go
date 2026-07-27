@@ -154,7 +154,10 @@ func expectedValue(route model.Route, snap model.Snapshot) (string, error) {
 	if target == nil {
 		return "", fmt.Errorf("线路既没引用回源, 也没填落点值")
 	}
-	if target.Kind == model.OriginSaaSFallback {
+	// 走 CF for SaaS 的线路, 解析目标一律是 SaaS 区的回退源。
+	// 自定义源服务器不是解析目标 —— 它配在 CF 的自定义主机名上, 决定的是流量进了 CF 边缘之后往哪转,
+	// DNS 里写它 CF 根本不认识。
+	if target.Kind == model.OriginSaaSFallback || target.Kind == model.OriginSaaSCustom {
 		if snap.FallbackOrigin == "" {
 			return "", fmt.Errorf("SaaS 区还没设置回退源")
 		}
