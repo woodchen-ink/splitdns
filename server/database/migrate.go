@@ -40,6 +40,12 @@ func dropLegacyRouteFK(db *gorm.DB, migrate func() error) error {
 		slog.Info("发现上次未完成的 route 表重建, 继续收尾")
 	}
 
+	// SQLite 的 RENAME 会把索引一并带到新表名下, 名字不变。
+	// 不先删掉, AutoMigrate 建同名索引就会报 already exists。
+	if err := dropIndexes(db, "route_legacy"); err != nil {
+		return err
+	}
+
 	if err := migrate(); err != nil {
 		return fmt.Errorf("重建 route 表失败: %w", err)
 	}
@@ -53,6 +59,30 @@ func dropLegacyRouteFK(db *gorm.DB, migrate func() error) error {
 		return fmt.Errorf("删除旧表失败: %w", err)
 	}
 	return nil
+}
+
+// dropIndexes 删掉某张表上的全部命名索引。
+// sql 为 NULL 的是 SQLite 为 UNIQUE / 主键自动建的内部索引, 删不得也不用删。
+func dropIndexes(db *gorm.DB, table string) error {
+	var names []string
+	err := db.Raw(
+		"SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ? AND sql IS NOT NULL",
+		table,
+	).Scan(&names).Error
+	if err != nil {
+		return fmt.Errorf("查询 %s 的索引失败: %w", table, err)
+	}
+	for _, name := range names {
+		if err := db.Exec("DROP INDEX IF EXISTS " + quoteIdent(name)).Error; err != nil {
+			return fmt.Errorf("删除索引 %s 失败: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// quoteIdent 给标识符加反引号, 内部的反引号按 SQLite 规则翻倍转义。
+func quoteIdent(name string) string {
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
 // tableExists 判断表是否存在。
