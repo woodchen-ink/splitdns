@@ -19,3 +19,7 @@ next-env.d.ts
 # Wails 构建产物与拷进来的前端产物
 /desktop/build/bin/
 /desktop/frontend/
+# go build 在模块目录留下的二进制, 名字跟着目录走
+/desktop/desktop.exe
+# wails 为 -webview2 embed 下载的引导程序
+/desktop/build/windows/installer/tmp/
