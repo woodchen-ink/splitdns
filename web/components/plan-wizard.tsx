@@ -107,11 +107,18 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
 
   const refreshPlan = (view: PlanView) => qc.setQueryData(queryKeys.plan(planId), view);
 
+  // 记住待确认的是哪种做法, 确认时要原样再发一次
+  const [pendingAction, setPendingAction] = useState("");
   const apply = useMutation({
-    mutationFn: (confirm: boolean) =>
-      postWithMessage<PlanView>(`/api/plans/${planId}/apply`, { stepId: step.id, confirm }),
+    mutationFn: ({ confirm, action }: { confirm: boolean; action?: string }) =>
+      postWithMessage<PlanView>(`/api/plans/${planId}/apply`, {
+        stepId: step.id,
+        confirm,
+        action: action ?? "",
+      }),
     onSuccess: ({ data, msg }) => {
       setPendingConfirm(null);
+      setPendingAction("");
       refreshPlan(data);
       toast.success(msg || "已执行");
     },
@@ -177,7 +184,9 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
       {pendingConfirm && (
         <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
           <p className="text-sm font-medium text-red-700 dark:text-red-400">
-            这一步会删除记录, 确认后不可撤销
+            {pendingAction === "migrate"
+              ? "确认后会先把记录搬到 DNSPod, 再从父区删除"
+              : "这一步会删除记录, 确认后不可撤销"}
           </p>
           <pre className="mt-2 overflow-x-auto font-mono text-xs whitespace-pre-wrap">
             {pendingConfirm}
@@ -186,12 +195,19 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
             <Button
               size="sm"
               variant="destructive"
-              onClick={() => apply.mutate(true)}
+              onClick={() => apply.mutate({ confirm: true, action: pendingAction })}
               disabled={apply.isPending}
             >
-              确认删除
+              {pendingAction === "migrate" ? "确认迁移并删除" : "确认删除"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setPendingConfirm(null)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setPendingConfirm(null);
+                setPendingAction("");
+              }}
+            >
               取消
             </Button>
           </div>
@@ -200,9 +216,30 @@ function StepCard({ step, planId }: { step: Step; planId: number }) {
 
       {!done && !pendingConfirm && (
         <div className="mt-3 flex flex-wrap gap-2">
+          {/* 清理那一步的记录可能还在服务, 默认给"先搬走"这条更安全的路 */}
+          {step.key === "cf.cleanup" && (
+            <Button
+              size="sm"
+              onClick={() => {
+                setPendingAction("migrate");
+                apply.mutate({ confirm: false, action: "migrate" });
+              }}
+              disabled={apply.isPending}
+            >
+              {apply.isPending ? "处理中…" : "先迁移到 DNSPod 再删"}
+            </Button>
+          )}
           {step.mode !== "wait" && step.verifiable && (
-            <Button size="sm" onClick={() => apply.mutate(false)} disabled={apply.isPending}>
-              {apply.isPending ? "执行中…" : "自动执行"}
+            <Button
+              size="sm"
+              variant={step.key === "cf.cleanup" ? "outline" : "default"}
+              onClick={() => {
+                setPendingAction("");
+                apply.mutate({ confirm: false });
+              }}
+              disabled={apply.isPending}
+            >
+              {apply.isPending ? "执行中…" : step.key === "cf.cleanup" ? "直接删除" : "自动执行"}
             </Button>
           )}
           {step.mode === "manual" && (

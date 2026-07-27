@@ -34,7 +34,10 @@ type DNSRecord struct {
 	Name    string `json:"name"`
 	Content string `json:"content"`
 	Proxied bool   `json:"proxied"`
-	TTL     int    `json:"ttl"`
+	// TTL 1 表示自动
+	TTL int `json:"ttl"`
+	// Priority 仅 MX / SRV 有值
+	Priority *int `json:"priority"`
 }
 
 // ListRecords 按名字 (可选类型) 查记录。name 传完整主机名, 不是相对名。

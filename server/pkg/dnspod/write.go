@@ -104,6 +104,8 @@ type NewRecord struct {
 	Line      string
 	Value     string
 	TTL       uint64
+	// Priority MX 记录必须带, 其它类型留 nil
+	Priority *uint64
 }
 
 // DefaultTTL 是新建记录用的 TTL。
@@ -122,6 +124,9 @@ func (c *Client) CreateRecord(ctx context.Context, domain string, r NewRecord) e
 	req.RecordLine = common.StringPtr(r.Line)
 	req.Value = common.StringPtr(r.Value)
 	req.TTL = common.Uint64Ptr(r.TTL)
+	if r.Priority != nil {
+		req.MX = common.Uint64Ptr(*r.Priority)
+	}
 
 	if _, err := c.api.CreateRecordWithContext(ctx, req); err != nil {
 		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {

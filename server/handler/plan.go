@@ -48,6 +48,8 @@ type applyRequest struct {
 	StepID uint `json:"stepId"`
 	// Confirm 破坏性操作的二次确认
 	Confirm bool `json:"confirm"`
+	// Action 同一步骤的不同做法, 目前只有清理那步用: "migrate" 表示先搬走再删
+	Action string `json:"action"`
 }
 
 // ApplyStep POST /api/plans/{id}/apply 让程序执行某一步
@@ -62,7 +64,7 @@ func ApplyStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := service.ApplyStep(r.Context(), id, req.StepID, req.Confirm)
+	msg, err := service.ApplyStep(r.Context(), id, req.StepID, req.Confirm, req.Action)
 	if err != nil {
 		// 需要二次确认时用专门的业务码, 前端据此弹确认框并回显待删清单
 		if errors.Is(err, service.ErrNeedConfirm) {

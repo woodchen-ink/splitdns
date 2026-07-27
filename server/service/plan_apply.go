@@ -16,7 +16,8 @@ var ErrNeedConfirm = fmt.Errorf("需要确认")
 
 // ApplyStep 让程序替用户执行某一步。执行完不直接判成功, 仍然走一次验证 ——
 // 平台接口返回 200 不等于配置已经生效, 生效与否只认巡检结果。
-func ApplyStep(ctx context.Context, planID, stepID uint, confirm bool) (string, error) {
+// action 目前只有 cf.cleanup 用到: 传 "migrate" 表示先把还在服务的记录搬到 DNSPod 再删。
+func ApplyStep(ctx context.Context, planID, stepID uint, confirm bool, action string) (string, error) {
 	plan, err := loadPlan(planID)
 	if err != nil {
 		return "", err
@@ -53,7 +54,7 @@ func ApplyStep(ctx context.Context, planID, stepID uint, confirm bool) (string, 
 	case "cf.delegation":
 		return applyDelegation(ctx, *h, snap)
 	case "cf.cleanup":
-		return applyCleanup(ctx, *h, confirm)
+		return applyCleanup(ctx, *h, confirm, action == "migrate")
 	case "saas.cert":
 		return "", fmt.Errorf("这一步只需要等待, CF 会自己签发证书")
 	}
@@ -359,9 +360,12 @@ func applyDelegation(ctx context.Context, h model.Hostname, snap model.Snapshot)
 	return fmt.Sprintf("已加委派 NS: %s。父区其它记录没有任何改动", strings.Join(created, ", ")), nil
 }
 
-// applyCleanup 删除父区里被委派遮蔽的记录。
-// 这是本流程里唯一不可逆的操作, 未确认时只返回待删清单, 不动手。
-func applyCleanup(ctx context.Context, h model.Hostname, confirm bool) (string, error) {
+// applyCleanup 处理父区里被委派遮蔽的记录。
+//
+// migrate 为真时先把还在服务的记录搬到 DNSPod 再删 —— 被遮蔽不等于该扔,
+// 这些记录本来在正常工作, 只是委派之后待错了地方, 直接删会把线上打断。
+// 这是本流程里唯一不可逆的操作, 未确认时只返回清单, 不动手。
+func applyCleanup(ctx context.Context, h model.Hostname, confirm, migrate bool) (string, error) {
 	cf, err := cloudflareClient(h.CFCredentialID)
 	if err != nil {
 		return "", err
@@ -378,21 +382,51 @@ func applyCleanup(ctx context.Context, h model.Hostname, confirm bool) (string, 
 		return "父区没有被遮蔽的记录, 无需清理", nil
 	}
 
-	list := make([]string, 0, len(shadowed))
-	for _, r := range shadowed {
-		list = append(list, fmt.Sprintf("%s %s → %s", r.Name, r.Type, r.Content))
-	}
-	if !confirm {
-		return "", fmt.Errorf("%w: 将从 %s 删除以下 %d 条记录\n  %s",
-			ErrNeedConfirm, h.ParentZone, len(shadowed), strings.Join(list, "\n  "))
+	if !migrate {
+		if !confirm {
+			list := make([]string, 0, len(shadowed))
+			for _, r := range shadowed {
+				list = append(list, fmt.Sprintf("%s %s → %s", r.Name, r.Type, r.Content))
+			}
+			return "", fmt.Errorf("%w: 将从 %s 直接删除以下 %d 条记录\n  %s\n\n"+
+				"其中如果有还在服务的记录, 请改用「先迁移到 DNSPod 再删」",
+				ErrNeedConfirm, h.ParentZone, len(shadowed), strings.Join(list, "\n  "))
+		}
+		return deleteShadowed(ctx, cf, zoneID, shadowed)
 	}
 
+	dp, err := dnspodClient(h.DNSPodCredentialID)
+	if err != nil {
+		return "", err
+	}
+	snap := Inspect(ctx, h).Snapshot
+	plans := planShadowedMigration(h, shadowed, snap.Records)
+
+	if !confirm {
+		return "", fmt.Errorf("%w: 将按下面的方式处理 %s 里这 %d 条被遮蔽的记录, 搬完即从父区删除\n%s",
+			ErrNeedConfirm, h.ParentZone, len(shadowed), describeShadowedPlan(plans, h.DNSPodZone()))
+	}
+
+	moved, err := migrateShadowedRecords(ctx, dp, h.DNSPodZone(), plans)
+	if err != nil {
+		// 搬到一半失败就停手, 父区的记录一条都不动 —— 已经搬过去的是幂等的, 重试不会重复建
+		return "", fmt.Errorf("%w (已搬 %d 条, 父区未做任何删除)", err, moved)
+	}
+	msg, err := deleteShadowed(ctx, cf, zoneID, shadowed)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("已搬 %d 条到 %s, %s", moved, h.DNSPodZone(), msg), nil
+}
+
+// deleteShadowed 从父区删掉这批记录。
+func deleteShadowed(ctx context.Context, cf *cloudflare.Client, zoneID string, shadowed []cloudflare.DNSRecord) (string, error) {
 	for _, r := range shadowed {
 		if err := cf.DeleteRecord(ctx, zoneID, r.ID); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("已删除 %d 条被遮蔽的记录", len(shadowed)), nil
+	return fmt.Sprintf("已从父区删除 %d 条被遮蔽的记录", len(shadowed)), nil
 }
 
 // findOrigin 在该域名的线路里找出指定类型的落点, 引用回源与内联填值一视同仁。
