@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"log"
@@ -102,22 +104,30 @@ func writable(dir string) bool {
 	return true
 }
 
+// stampFile 存着上次释放的那份产物的内容指纹。
+const stampFile = ".asset-stamp"
+
 // extractAssets 把嵌入的前端产物摊到磁盘。
-// 已经摊过且内容没变时直接跳过 —— 靠文件数量与索引页大小做个便宜的判断,
-// 每次启动全量重写既慢又会让磁盘白白转一遍。
+//
+// 是否需要重新释放, 按整份产物的内容哈希判断。别拿"首页大小变没变"之类的近似条件糊弄:
+// 改了子页面而首页没动时它判不出来, 结果就是新版二进制配着上一版前端跑, 症状离病灶十万八千里。
 func extractAssets(root string) error {
 	sub, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
 		return err
 	}
-	if assetsUpToDate(sub, root) {
+	stamp, err := assetsStamp(sub)
+	if err != nil {
+		return err
+	}
+	if current, err := os.ReadFile(filepath.Join(root, stampFile)); err == nil && string(current) == stamp {
 		return nil
 	}
+
 	if err := os.RemoveAll(root); err != nil {
 		return err
 	}
-
-	return fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -134,19 +144,36 @@ func extractAssets(root string) error {
 		}
 		return os.WriteFile(target, data, 0o644)
 	})
+	if err != nil {
+		return err
+	}
+	// 指纹最后写: 中途失败时下次启动会发现它对不上, 重新释放一遍
+	return os.WriteFile(filepath.Join(root, stampFile), []byte(stamp), 0o644)
 }
 
-// assetsUpToDate 比较嵌入产物与磁盘上已释放内容的首页大小, 相同就认为不用重来。
-func assetsUpToDate(sub fs.FS, root string) bool {
-	embedded, err := fs.Stat(sub, "index.html")
+// assetsStamp 算出嵌入产物的内容指纹。
+// 路径和内容都参与, 所以任何一个文件改了都会变。几 MB 的产物走一遍毫秒级, 不值得为它省。
+func assetsStamp(sub fs.FS) (string, error) {
+	h := sha256.New()
+	err := fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		fmt.Fprintf(h, "%s\x00", path)
+		data, err := fs.ReadFile(sub, path)
+		if err != nil {
+			return err
+		}
+		h.Write(data)
+		return nil
+	})
 	if err != nil {
-		return false
+		return "", err
 	}
-	onDisk, err := os.Stat(filepath.Join(root, "index.html"))
-	if err != nil {
-		return false
-	}
-	return embedded.Size() == onDisk.Size()
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // fatal 记录启动失败并弹窗告知, 而不是让窗口一闪而过 ——
