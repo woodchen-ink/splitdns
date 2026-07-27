@@ -127,16 +127,27 @@ func applyCustomHostname(ctx context.Context, h model.Hostname) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	if existing, err := cf.FindCustomHostname(ctx, zoneID, h.Hostname); err == nil && existing != nil {
-		return "自定义主机名已存在, 无需重复创建", nil
-	}
-
 	var customOrigin, sni string
 	if o := findOrigin(h, model.OriginSaaSCustom); o != nil {
 		customOrigin, sni = o.Value, o.SNI
 		if sni == "" {
 			sni = o.Value
 		}
+	}
+
+	// 已经存在时不重复创建, 但要把源服务器纠正到配置值 ——
+	// 这个字段配在自定义主机名上而不是 DNS 里, 只能在这里改
+	if existing, err := cf.FindCustomHostname(ctx, zoneID, h.Hostname); err == nil && existing != nil {
+		if sameName(existing.CustomOriginServer, customOrigin) {
+			return "自定义主机名已存在且源服务器正确, 无需改动", nil
+		}
+		if err := cf.UpdateCustomOrigin(ctx, zoneID, existing.ID, customOrigin, sni); err != nil {
+			return "", err
+		}
+		if customOrigin == "" {
+			return "已把源服务器改回默认回退源", nil
+		}
+		return fmt.Sprintf("已把源服务器改成 %s (SNI %s), 记得那台机器上要有这个 SNI 的 router", customOrigin, sni), nil
 	}
 
 	ch, err := cf.CreateCustomHostname(ctx, zoneID, h.Hostname, customOrigin, sni)
