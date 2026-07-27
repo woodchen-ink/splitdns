@@ -5,11 +5,20 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
-import type { Hostname } from "@/lib/types";
+import type { Hostname, Route } from "@/lib/types";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+
+// 落点有两种写法: 引用回源库, 或直接内联填值。列表要把两种都显示出来,
+// 只认前者会让内联落点显示成"未绑定"。
+function routeTarget(r: Route): string {
+  if (r.origin?.name) {
+    return r.origin.name;
+  }
+  return r.value || "未设置落点";
+}
 
 interface HostnameList {
   list: Hostname[] | null;
@@ -85,7 +94,7 @@ export default function HostnamesPage() {
             <div className="mt-2 flex flex-wrap gap-1.5">
               {(h.routes ?? []).map((r) => (
                 <Badge key={r.id} variant="outline" className="font-normal">
-                  {r.line} → {r.origin?.name ?? "未绑定回源"}
+                  {r.line} → {routeTarget(r)}
                 </Badge>
               ))}
             </div>
