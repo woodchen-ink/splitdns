@@ -2,7 +2,9 @@ package cloudflare
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 )
 
 // NewRecord 是创建 DNS 记录的入参。
@@ -56,14 +58,26 @@ type NewCustomHostname struct {
 	CustomOriginSNI    string `json:"custom_origin_sni,omitempty"`
 }
 
-// UpdateCustomOrigin 改自定义主机名的源服务器与 SNI。
-// 两个值传空表示回到默认回退源。
+// UpdateCustomOrigin 改自定义主机名的源服务器与 SNI。origin 传空表示回到默认回退源。
+//
+// sni 只在与源服务器不同名时才发: CF 默认就拿源服务器主机名当回源 SNI, 而显式设置这个字段
+// 是企业版 SSL for SaaS 才有的能力, 非企业账号发了会被 1456 拒掉。
 func (c *Client) UpdateCustomOrigin(ctx context.Context, zoneID, hostnameID, origin, sni string) error {
-	payload := map[string]any{
-		"custom_origin_server": origin,
-		"custom_origin_sni":    sni,
+	payload := map[string]any{"custom_origin_server": origin}
+	if sni != "" && !strings.EqualFold(sni, origin) {
+		payload["custom_origin_sni"] = sni
 	}
-	return c.do(ctx, http.MethodPatch, "/zones/"+zoneID+"/custom_hostnames/"+hostnameID, nil, payload, nil)
+	err := c.do(ctx, http.MethodPatch, "/zones/"+zoneID+"/custom_hostnames/"+hostnameID, nil, payload, nil)
+	return explainSNIRestriction(err)
+}
+
+// explainSNIRestriction 把 CF 的 1456 翻译成能直接照做的说明。
+func explainSNIRestriction(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "1456") {
+		return err
+	}
+	return fmt.Errorf("单独指定回源 SNI 是企业版 SSL for SaaS 才有的功能, 当前账号用不了。" +
+		"把这个回源的 SNI 留空或改成与源服务器同名即可 —— CF 默认就拿源服务器主机名当 SNI")
 }
 
 // CreateCustomHostname 创建自定义主机名。
@@ -75,11 +89,14 @@ func (c *Client) CreateCustomHostname(ctx context.Context, zoneID, hostname, cus
 	in.SSL.Type = "dv"
 	in.SSL.Settings.MinTLSVersion = "1.2"
 	in.CustomOriginServer = customOrigin
-	in.CustomOriginSNI = sni
+	// 与源服务器同名的 SNI 不发, 理由见 UpdateCustomOrigin
+	if sni != "" && !strings.EqualFold(sni, customOrigin) {
+		in.CustomOriginSNI = sni
+	}
 
 	var out CustomHostname
 	if err := c.do(ctx, http.MethodPost, "/zones/"+zoneID+"/custom_hostnames", nil, in, &out); err != nil {
-		return nil, err
+		return nil, explainSNIRestriction(err)
 	}
 	return &out, nil
 }
