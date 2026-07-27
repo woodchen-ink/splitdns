@@ -1,0 +1,125 @@
+name: 发版
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - id: ver
+        # tag 触发时用 tag 名, 手动触发时用短 commit, 保证产物名永远能对上一次构建
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-build
+
+      - name: 安装 NSIS
+        run: |
+          choco install nsis -y --no-progress
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: 构建绿色版与安装版
+        working-directory: desktop
+        # 不能带 -s: desktop/frontend/ 不进仓库, 干净检出时得靠 wails 跑 frontend:build 生成,
+        # 跳过的话 wails 会塞一个占位 index.html 进去, 编译照样通过但装出来是个空壳
+        # -webview2 embed: 目标机器没装 WebView2 运行时也能自己拉起来装, 不能假设环境
+        # -skipbindings: 前端不用 Wails 的 JS 绑定, 所有交互都走 /api
+        # -nsis: 顺带出一个安装版, 与绿色版是同一份二进制
+        run: wails build -platform windows/amd64 -webview2 embed -skipbindings -nsis
+
+      - name: 打包
+        working-directory: desktop/build/bin
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          Copy-Item ../../../README.md .
+          Compress-Archive -Path splitdns.exe,README.md -DestinationPath "splitdns-$env:VERSION-windows-amd64-portable.zip"
+          Move-Item splitdns-amd64-installer.exe "splitdns-$env:VERSION-windows-amd64-installer.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            desktop/build/bin/*-portable.zip
+            desktop/build/bin/*-installer.exe
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-build
+
+      - name: 构建 universal .app
+        working-directory: desktop
+        # darwin 端要链 WebKit, 只能在 macOS 上编译, 交叉编译不可行
+        run: wails build -platform darwin/universal -skipbindings
+
+      - name: 打包
+        working-directory: desktop/build/bin
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        # 用 ditto 而不是 zip: .app 是目录, 里面有符号链接与可执行位, zip 会丢
+        run: ditto -c -k --sequesterRsrc --keepParent splitdns.app "splitdns-$VERSION-macos-universal.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: desktop/build/bin/*-macos-universal.zip
+
+  release:
+    needs: [version, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ### Windows
+
+            两个包用的是同一份二进制, 差别只在数据放哪:
+
+            | | 数据位置 | 说明 |
+            |---|---|---|
+            | **安装版** `*-installer.exe` | `%APPDATA%\splitdns` | 常用, 升级重装不动数据 |
+            | **绿色版** `*-portable.zip` | exe 同级 `data/` | 解压即用, 整个文件夹拷走就带走全部配置 |
+
+            机器上没有 WebView2 会自己拉起来装。
+
+            ### macOS
+
+            `*-macos-universal.zip` 解压出 `splitdns.app`, Intel 与 Apple Silicon 通用。
+            数据在 `~/Library/Application Support/splitdns`。
+
+            **没有做签名和公证**, 首次打开会被 Gatekeeper 拦下。两种放行方式任选:
+
+            - 右键点 `splitdns.app` → 打开 → 在弹窗里再点一次「打开」
+            - 或者终端跑: `xattr -dr com.apple.quarantine /Applications/splitdns.app`
+
+            ### 升级
+
+            覆盖安装即可, 首次启动会自动更新内置前端, 数据不受影响。

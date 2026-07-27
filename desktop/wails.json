@@ -1,0 +1,13 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "splitdns",
+  "outputfilename": "splitdns",
+  "frontend:dir": "../web",
+  "frontend:install": "npm ci",
+  "frontend:build": "npm run build:desktop",
+  "info": {
+    "productName": "splitdns",
+    "productVersion": "1.0.0",
+    "comments": "分线路解析配置与巡检"
+  }
+}
