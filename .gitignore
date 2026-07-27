@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+*.db
+*.db-wal
+*.db-shm
+/server/splitdns
+/server/splitdns.exe
+next-env.d.ts
+.idea/
+.vscode/

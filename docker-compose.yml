@@ -1,0 +1,25 @@
+services:
+  splitdns:
+    build: .
+    image: splitdns:latest
+    container_name: splitdns
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Asia/Shanghai
+      PORT: "8080"
+      BIND_HOST: 0.0.0.0
+      DATABASE_PATH: /data/splitdns.db
+      STATIC_ROOT: /app/web/out
+      # 认证交给 Cloudflare Access: 配上团队域名与 AUD 后, 应用会校验边缘下发的身份 JWT,
+      # 防止有人绕过 Access 直连源站
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      # 没配 Access 时必须显式承认"我自己保证访问控制", 否则应用拒绝监听非回环地址
+      ALLOW_INSECURE_BIND: ${ALLOW_INSECURE_BIND:-}
+    volumes:
+      - splitdns-data:/data
+
+volumes:
+  splitdns-data:
