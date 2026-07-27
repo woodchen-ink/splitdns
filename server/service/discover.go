@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/woodchen-ink/splitdns/server/model"
 )
@@ -17,6 +18,42 @@ func CloudflareZones(ctx context.Context, credentialID uint) ([]string, error) {
 		return nil, err
 	}
 	return cf.ListZoneNames(ctx)
+}
+
+// DeriveParentZone 从访问域名推导它所属的 CF 父区。
+//
+// 取"可见 zone 里能匹配上的最长后缀": czl.net 与 sub.czl.net 同时存在时,
+// a.sub.czl.net 属于更具体的 sub.czl.net —— 那才是对它有权威的 zone。
+func DeriveParentZone(ctx context.Context, credentialID uint, hostname string) (string, error) {
+	host := normalizeName(hostname)
+	if host == "" {
+		return "", fmt.Errorf("还没填访问域名")
+	}
+	zones, err := CloudflareZones(ctx, credentialID)
+	if err != nil {
+		return "", err
+	}
+
+	best := ""
+	for _, z := range zones {
+		zone := normalizeName(z)
+		if zone == "" {
+			continue
+		}
+		if host != zone && !strings.HasSuffix(host, "."+zone) {
+			continue
+		}
+		if len(zone) > len(best) {
+			best = zone
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("这份凭据看不到 %s 所属的 zone, 确认 Token 的作用范围", hostname)
+	}
+	if best == host {
+		return "", fmt.Errorf("%s 本身就是一个 CF zone, 这个工具是拿来委派子域名的", hostname)
+	}
+	return best, nil
 }
 
 // DNSPodDomains 列出某份腾讯云凭据下的域名。

@@ -111,6 +111,20 @@ export function HostnameForm({
     staleTime: 5 * 60_000,
   });
 
+  // 父区由后端从可见 zone 里推导, 前端只拿来做预览 —— 推导逻辑只保留一份
+  const { data: derivedParent } = useQuery({
+    queryKey: ["discover", "parent-zone", draft.cfCredentialId, draft.hostname],
+    queryFn: () =>
+      api.get<{ parentZone: string }>(
+        `/api/discover/parent-zone?credentialId=${draft.cfCredentialId}` +
+          `&hostname=${encodeURIComponent(draft.hostname)}`,
+      ),
+    enabled: draft.cfCredentialId > 0 && draft.hostname.includes("."),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const parentZone = derivedParent?.parentZone ?? "";
+
   const save = useMutation({
     mutationFn: () => api.post<Hostname>("/api/hostnames", draft),
     onSuccess: (saved) => {
@@ -139,7 +153,14 @@ export function HostnameForm({
       }}
     >
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="访问域名" hint="对外提供服务的主机名, 如 i.czl.net">
+        <Field
+          label="访问域名"
+          hint={
+            parentZone
+              ? `父区自动推导为 ${parentZone}`
+              : "对外提供服务的主机名, 如 i.czl.net; 父区由它自动推导"
+          }
+        >
           <Input
             value={draft.hostname}
             onChange={(e) => set("hostname", e.target.value)}
@@ -147,45 +168,35 @@ export function HostnameForm({
             required
           />
         </Field>
-        <Field label="父区" hint="主域名所在的 CF zone, 委派 NS 加在这里; 选了凭据后可下拉选">
-          <Input
-            list="cf-zones"
-            value={draft.parentZone}
-            onChange={(e) => set("parentZone", e.target.value)}
-            placeholder="czl.net"
-            required
-          />
-        </Field>
-        <Field label="SaaS 区" hint="承载自定义主机名的另一个 CF zone; 不走 CF 可留空">
-          <Input
-            list="cf-zones"
-            value={draft.saasZone}
-            onChange={(e) => set("saasZone", e.target.value)}
-            placeholder="20200511.xyz"
-          />
-        </Field>
-        <Field label="DNSPod 域名" hint="留空则与访问域名相同">
-          <Input
-            list="dnspod-domains"
-            value={draft.dnspodDomain}
-            onChange={(e) => set("dnspodDomain", e.target.value)}
-            placeholder="i.czl.net"
-          />
-        </Field>
-        <Field label="父区凭据">
+        <Field label="Cloudflare 凭据" hint="父区和 SaaS 区都用它">
           <CredSelect
             value={draft.cfCredentialId}
             options={cfCreds}
             onChange={(v) => set("cfCredentialId", v)}
           />
         </Field>
-        <Field label="SaaS 区凭据" hint="留空表示与父区同账号">
-          <CredSelect
-            value={draft.saasCredentialId}
-            options={cfCreds}
-            onChange={(v) => set("saasCredentialId", v)}
-            allowEmpty
-          />
+        <Field label="SaaS 区" hint="承载自定义主机名的另一个 CF zone; 不走 CF 就选「不使用」">
+          <Select
+            value={draft.saasZone || "__none__"}
+            onValueChange={(v) => set("saasZone", v === "__none__" ? "" : (v ?? ""))}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue>
+                {(v) => (!v || String(v) === "__none__" ? "不使用 CF for SaaS" : String(v))}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">不使用 CF for SaaS</SelectItem>
+              {/* 父区排除掉: 自定义主机名不能是 SaaS 区自己的子域 */}
+              {(cfZones ?? [])
+                .filter((z) => z !== parentZone)
+                .map((z) => (
+                  <SelectItem key={z} value={z}>
+                    {z}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
         </Field>
         <Field label="DNSPod 凭据">
           <CredSelect

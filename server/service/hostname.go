@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/woodchen-ink/splitdns/server/database"
@@ -47,7 +48,20 @@ func ListHostnames(keyword string, offset, limit int) ([]model.Hostname, int64, 
 
 // SaveHostname 新建或更新访问域名, 连同线路一起整体替换。
 // 线路是从属于域名的配置项, 整体替换比逐条 diff 简单可靠, 数量也就几条。
-func SaveHostname(h *model.Hostname) error {
+//
+// 父区不让用户填: 拿访问域名去 CF 可见的 zone 里推导即可, 让人手打只会多一处填错的地方。
+func SaveHostname(ctx context.Context, h *model.Hostname) error {
+	if h.ParentZone == "" {
+		zone, err := DeriveParentZone(ctx, h.CFCredentialID, h.Hostname)
+		if err != nil {
+			return err
+		}
+		h.ParentZone = zone
+	}
+	if h.SaaSZone != "" && sameName(h.SaaSZone, h.ParentZone) {
+		return fmt.Errorf("SaaS 区不能就是父区 %s —— 自定义主机名不能是 SaaS 区自己的子域", h.ParentZone)
+	}
+
 	return database.DB.Transaction(func(tx *gorm.DB) error {
 		if h.ID != 0 {
 			if err := tx.Where("hostname_id = ?", h.ID).Delete(&model.Route{}).Error; err != nil {

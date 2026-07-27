@@ -45,11 +45,15 @@ func SaveHostname(w http.ResponseWriter, r *http.Request) {
 		resputil.Fail(w, 400, "请求体格式错误: "+err.Error())
 		return
 	}
-	if h.Hostname == "" || h.ParentZone == "" {
-		resputil.Fail(w, 400, "访问域名和父区都不能为空")
+	if h.Hostname == "" {
+		resputil.Fail(w, 400, "访问域名不能为空")
 		return
 	}
-	if err := service.SaveHostname(&h); err != nil {
+	if h.CFCredentialID == 0 {
+		resputil.Fail(w, 400, "要先选一份 Cloudflare 凭据, 父区靠它推导")
+		return
+	}
+	if err := service.SaveHostname(r.Context(), &h); err != nil {
 		resputil.Fail(w, 500, err.Error())
 		return
 	}

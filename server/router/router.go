@@ -38,6 +38,7 @@ func New(cfg *config.Config) http.Handler {
 
 	api.HandleFunc("GET /api/discover/cf-zones", handler.CloudflareZones)
 	api.HandleFunc("GET /api/discover/dnspod-domains", handler.DNSPodDomains)
+	api.HandleFunc("GET /api/discover/parent-zone", handler.ParentZone)
 	api.HandleFunc("GET /api/discover/saas-origins", handler.SaaSOrigins)
 
 	api.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {

@@ -38,6 +38,21 @@ func DNSPodDomains(w http.ResponseWriter, r *http.Request) {
 	resputil.OK(w, domains)
 }
 
+// ParentZone GET /api/discover/parent-zone?credentialId=&hostname=
+// 推导逻辑只有后端一份, 前端拿它做预览而不是自己再算一遍
+func ParentZone(w http.ResponseWriter, r *http.Request) {
+	id, ok := queryCredentialID(w, r)
+	if !ok {
+		return
+	}
+	zone, err := service.DeriveParentZone(r.Context(), id, r.URL.Query().Get("hostname"))
+	if err != nil {
+		resputil.Fail(w, 400, err.Error())
+		return
+	}
+	resputil.OK(w, map[string]string{"parentZone": zone})
+}
+
 // SaaSOrigins GET /api/discover/saas-origins?credentialId=&zone=
 func SaaSOrigins(w http.ResponseWriter, r *http.Request) {
 	id, ok := queryCredentialID(w, r)
