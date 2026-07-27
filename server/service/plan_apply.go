@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -162,13 +163,24 @@ func applyCustomHostname(ctx context.Context, h model.Hostname) (string, error) 
 }
 
 // applyDNSPodZone 在 DNSPod 添加域名。
+// 主域名不在这个腾讯云账号下时, DNSPod 要求先证明归属 —— 而它要的那条 TXT 恰好加在父区,
+// 父区就在 CF 上且凭据我们有, 所以这一步能连着做完, 不用把人踢去两个面板之间来回跑。
 func applyDNSPodZone(ctx context.Context, h model.Hostname) (string, error) {
 	dp, err := dnspodClient(h.DNSPodCredentialID)
 	if err != nil {
 		return "", err
 	}
 	zone := h.DNSPodZone()
-	if err := dp.CreateDomain(ctx, zone); err != nil {
+
+	err = dp.CreateDomain(ctx, zone)
+	if errors.Is(err, dnspod.ErrNeedOwnershipTXT) {
+		msg, verifyErr := verifyDNSPodOwnership(ctx, h, dp, zone)
+		if verifyErr != nil {
+			return "", verifyErr
+		}
+		return msg, nil
+	}
+	if err != nil {
 		return "", err
 	}
 	d, err := dp.DescribeDomain(ctx, zone)
@@ -176,6 +188,55 @@ func applyDNSPodZone(ctx context.Context, h model.Hostname) (string, error) {
 		return fmt.Sprintf("已添加域名 %s", zone), nil
 	}
 	return fmt.Sprintf("已添加域名 %s, 分配到的 NS: %s", zone, strings.Join(d.Nameservers, ", ")), nil
+}
+
+// verifyDNSPodOwnership 取 DNSPod 要求的归属验证 TXT, 写进父区, 再重试添加域名。
+// DNSPod 读到这条记录有延迟, 重试失败不算错 —— 记录已经落地, 过一会儿再点一次就行。
+func verifyDNSPodOwnership(ctx context.Context, h model.Hostname, dp *dnspod.Client, zone string) (string, error) {
+	txt, err := dp.SubdomainOwnershipTXT(ctx, zone)
+	if err != nil {
+		return "", err
+	}
+
+	cf, err := cloudflareClient(h.CFCredentialID)
+	if err != nil {
+		return "", fmt.Errorf("要把验证 TXT 写进父区, 但 %w", err)
+	}
+	zoneID, err := cf.ZoneIDByName(ctx, txt.Domain)
+	if err != nil {
+		return "", fmt.Errorf("DNSPod 要求把验证 TXT 加在 %s 上, 但这份凭据看不到这个 zone: %w", txt.Domain, err)
+	}
+
+	// 已经有同名同值的记录就不重复建, 这一步可能被点很多次
+	existing, err := cf.ListRecords(ctx, zoneID, txt.FQDN, "TXT")
+	if err != nil {
+		return "", err
+	}
+	found := false
+	for _, r := range existing {
+		if strings.Trim(r.Content, `"`) == txt.Value {
+			found = true
+			break
+		}
+	}
+	if !found {
+		_, err = cf.CreateRecord(ctx, zoneID, cloudflare.NewRecord{
+			Type:    "TXT",
+			Name:    txt.FQDN,
+			Content: txt.Value,
+			Comment: "splitdns: DNSPod 域名归属验证",
+		})
+		if err != nil {
+			return "", fmt.Errorf("在 %s 写验证 TXT 失败: %w", txt.Domain, err)
+		}
+	}
+
+	if err := dp.CreateDomain(ctx, zone); err != nil {
+		return fmt.Sprintf(
+			"已把归属验证 TXT %s = %s 写进 %s, 但 DNSPod 还没读到。等一两分钟再点一次这一步。",
+			txt.FQDN, txt.Value, txt.Domain), nil
+	}
+	return fmt.Sprintf("已通过归属验证 (TXT 写在 %s) 并添加域名 %s", txt.Domain, zone), nil
 }
 
 // applyDCVRecords 把 CF 要求的全部验证 TXT 写进 DNSPod。
