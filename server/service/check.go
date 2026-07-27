@@ -20,6 +20,7 @@ func evaluate(h model.Hostname, snap model.Snapshot) []model.Finding {
 	out = append(out, checkSaaS(h, snap)...)
 	out = append(out, checkTXT(h, snap)...)
 	out = append(out, checkRoutes(h, snap)...)
+	out = append(out, checkZoneEnabled(snap)...)
 	return out
 }
 
@@ -50,6 +51,20 @@ func checkDelegation(snap model.Snapshot) []model.Finding {
 		}}
 	}
 	return nil
+}
+
+// checkZoneEnabled 检查 DNSPod 上该域名的解析是否启用。
+// 新加的域名默认是暂停状态, 这时记录全对、委派也对, 解析就是不出结果 —— 很难靠肉眼发现。
+func checkZoneEnabled(snap model.Snapshot) []model.Finding {
+	if len(snap.DNSPodNameservers) == 0 || snap.DNSPodEnabled {
+		return nil
+	}
+	return []model.Finding{{
+		Level: model.LevelError,
+		Code:  "dnspod.paused",
+		Title: "DNSPod 上这个域名的解析是暂停状态",
+		Fix:   "记录配得再对也不会生效。在「在 DNSPod 添加域名」那一步点自动执行即可开启",
+	}}
 }
 
 // checkShadowed 报告被委派遮蔽的记录。这些记录在 CF 面板里仍然可见, 但一条都不生效。

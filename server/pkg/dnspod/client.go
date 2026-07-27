@@ -33,6 +33,8 @@ type Domain struct {
 	Nameservers []string
 	// Grade 套餐等级, 决定可用线路数量 (免费版只有 默认/境内/境外)
 	Grade string
+	// Enabled 解析是否处于启用状态。新加的域名默认暂停, 不开解析记录不生效
+	Enabled bool
 }
 
 // DescribeDomain 查询域名基础信息。域名不在该账号下时返回明确错误。
@@ -61,6 +63,7 @@ func (c *Client) DescribeDomain(ctx context.Context, domain string) (*Domain, er
 	if info.Grade != nil {
 		d.Grade = *info.Grade
 	}
+	d.Enabled = info.Status == nil || *info.Status == "ENABLE"
 	return d, nil
 }
 

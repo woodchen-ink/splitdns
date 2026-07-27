@@ -198,10 +198,13 @@ func stepSatisfied(key string, h model.Hostname, snap model.Snapshot) (ok bool, 
 		return false, true, "SaaS 区里还没有这个自定义主机名"
 
 	case "dnspod.zone":
-		if len(snap.DNSPodNameservers) > 0 {
-			return true, true, ""
+		if len(snap.DNSPodNameservers) == 0 {
+			return false, true, "DNSPod 上还查不到这个域名"
 		}
-		return false, true, "DNSPod 上还查不到这个域名"
+		if !snap.DNSPodEnabled {
+			return false, true, "域名加好了, 但解析还是暂停状态"
+		}
+		return true, true, ""
 
 	case "dnspod.dcv_txt":
 		missing := missingTXT(h, snap)

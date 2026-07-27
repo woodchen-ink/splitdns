@@ -41,6 +41,8 @@ type Snapshot struct {
 	Delegation []string `json:"delegation"`
 	// DNSPodNameservers DNSPod 实际分配给该域名的 NS
 	DNSPodNameservers []string `json:"dnspodNameservers"`
+	// DNSPodEnabled DNSPod 上该域名的解析是否已启用
+	DNSPodEnabled bool `json:"dnspodEnabled"`
 	// ShadowedRecords CF 父区里被委派遮蔽的记录 (名字 + 类型)
 	ShadowedRecords []string `json:"shadowedRecords"`
 

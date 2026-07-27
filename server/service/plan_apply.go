@@ -183,11 +183,15 @@ func applyDNSPodZone(ctx context.Context, h model.Hostname) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// DNSPod 新加的域名默认是暂停状态, 记录配得再对也不生效, 顺手开掉
+	if err := dp.EnableDomain(ctx, zone); err != nil {
+		return "", err
+	}
 	d, err := dp.DescribeDomain(ctx, zone)
 	if err != nil {
-		return fmt.Sprintf("已添加域名 %s", zone), nil
+		return fmt.Sprintf("已添加域名 %s 并启用解析", zone), nil
 	}
-	return fmt.Sprintf("已添加域名 %s, 分配到的 NS: %s", zone, strings.Join(d.Nameservers, ", ")), nil
+	return fmt.Sprintf("已添加域名 %s 并启用解析, 分配到的 NS: %s", zone, strings.Join(d.Nameservers, ", ")), nil
 }
 
 // verifyDNSPodOwnership 取 DNSPod 要求的归属验证 TXT, 写进父区, 再重试添加域名。
@@ -236,7 +240,10 @@ func verifyDNSPodOwnership(ctx context.Context, h model.Hostname, dp *dnspod.Cli
 			"已把归属验证 TXT %s = %s 写进 %s, 但 DNSPod 还没读到。等一两分钟再点一次这一步。",
 			txt.FQDN, txt.Value, txt.Domain), nil
 	}
-	return fmt.Sprintf("已通过归属验证 (TXT 写在 %s) 并添加域名 %s", txt.Domain, zone), nil
+	if err := dp.EnableDomain(ctx, zone); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("已通过归属验证 (TXT 写在 %s), 添加域名 %s 并启用解析", txt.Domain, zone), nil
 }
 
 // applyDCVRecords 把 CF 要求的全部验证 TXT 写进 DNSPod。

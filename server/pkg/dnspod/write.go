@@ -37,6 +37,22 @@ func (c *Client) CreateDomain(ctx context.Context, domain string) error {
 	return nil
 }
 
+// EnableDomain 启用域名解析。
+// DNSPod 新加的域名默认是暂停状态, 不开的话解析记录配得再对也不会生效。
+func (c *Client) EnableDomain(ctx context.Context, domain string) error {
+	req := dnspod.NewModifyDomainStatusRequest()
+	req.Domain = common.StringPtr(domain)
+	req.Status = common.StringPtr("enable")
+
+	if _, err := c.api.ModifyDomainStatusWithContext(ctx, req); err != nil {
+		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {
+			return fmt.Errorf("启用 %s 的解析失败: %s %s", domain, sdkErr.Code, sdkErr.Message)
+		}
+		return fmt.Errorf("启用 %s 的解析失败: %w", domain, err)
+	}
+	return nil
+}
+
 // OwnershipTXT 是 DNSPod 要求用来证明域名归属的 TXT 记录。
 // Domain 是要加记录的主域名, FQDN 是完整记录名。
 type OwnershipTXT struct {
