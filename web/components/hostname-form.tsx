@@ -96,37 +96,44 @@ export function HostnameForm({
   const cfCreds = (credentials ?? []).filter((c) => c.kind === "cloudflare");
   const dpCreds = (credentials ?? []).filter((c) => c.kind === "dnspod");
 
+  // 只有一份凭据时没什么可挑的, 直接当成已选。
+  // 用派生值而不是在 effect 里回写 state: 后者要么和 lint 规则打架, 要么会覆盖用户的手动选择。
+  const cfCredentialId = draft.cfCredentialId || (cfCreds.length === 1 ? cfCreds[0].id : 0);
+  const dnspodCredentialId =
+    draft.dnspodCredentialId || (dpCreds.length === 1 ? dpCreds[0].id : 0);
+
   // 平台上已有的 zone 与域名直接读出来供选, 不用手打
   const { data: cfZones } = useQuery({
-    queryKey: ["discover", "cf-zones", draft.cfCredentialId],
-    queryFn: () => api.get<string[] | null>(`/api/discover/cf-zones?credentialId=${draft.cfCredentialId}`),
-    enabled: draft.cfCredentialId > 0,
+    queryKey: ["discover", "cf-zones", cfCredentialId],
+    queryFn: () => api.get<string[] | null>(`/api/discover/cf-zones?credentialId=${cfCredentialId}`),
+    enabled: cfCredentialId > 0,
     staleTime: 5 * 60_000,
   });
   const { data: dpDomains } = useQuery({
-    queryKey: ["discover", "dnspod-domains", draft.dnspodCredentialId],
+    queryKey: ["discover", "dnspod-domains", dnspodCredentialId],
     queryFn: () =>
-      api.get<string[] | null>(`/api/discover/dnspod-domains?credentialId=${draft.dnspodCredentialId}`),
-    enabled: draft.dnspodCredentialId > 0,
+      api.get<string[] | null>(`/api/discover/dnspod-domains?credentialId=${dnspodCredentialId}`),
+    enabled: dnspodCredentialId > 0,
     staleTime: 5 * 60_000,
   });
 
   // 父区由后端从可见 zone 里推导, 前端只拿来做预览 —— 推导逻辑只保留一份
   const { data: derivedParent } = useQuery({
-    queryKey: ["discover", "parent-zone", draft.cfCredentialId, draft.hostname],
+    queryKey: ["discover", "parent-zone", cfCredentialId, draft.hostname],
     queryFn: () =>
       api.get<{ parentZone: string }>(
-        `/api/discover/parent-zone?credentialId=${draft.cfCredentialId}` +
+        `/api/discover/parent-zone?credentialId=${cfCredentialId}` +
           `&hostname=${encodeURIComponent(draft.hostname)}`,
       ),
-    enabled: draft.cfCredentialId > 0 && draft.hostname.includes("."),
+    enabled: cfCredentialId > 0 && draft.hostname.includes("."),
     retry: false,
     staleTime: 60_000,
   });
   const parentZone = derivedParent?.parentZone ?? "";
 
   const save = useMutation({
-    mutationFn: () => api.post<Hostname>("/api/hostnames", draft),
+    mutationFn: () =>
+      api.post<Hostname>("/api/hostnames", { ...draft, cfCredentialId, dnspodCredentialId }),
     onSuccess: (saved) => {
       toast.success("已保存");
       qc.invalidateQueries({ queryKey: ["config"] });
@@ -170,7 +177,7 @@ export function HostnameForm({
         </Field>
         <Field label="Cloudflare 凭据" hint="父区和 SaaS 区都用它">
           <CredSelect
-            value={draft.cfCredentialId}
+            value={cfCredentialId}
             options={cfCreds}
             onChange={(v) => set("cfCredentialId", v)}
           />
@@ -200,7 +207,7 @@ export function HostnameForm({
         </Field>
         <Field label="DNSPod 凭据">
           <CredSelect
-            value={draft.dnspodCredentialId}
+            value={dnspodCredentialId}
             options={dpCreds}
             onChange={(v) => set("dnspodCredentialId", v)}
           />
