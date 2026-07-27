@@ -8,11 +8,10 @@ import (
 	"github.com/woodchen-ink/go-web-utils/resputil"
 	"github.com/woodchen-ink/splitdns/server/config"
 	"github.com/woodchen-ink/splitdns/server/handler"
-	"github.com/woodchen-ink/splitdns/server/middleware"
 )
 
 // New 组装路由: /api 走业务处理器, 其余交给 Next.js 静态导出产物。
-// 配了 Cloudflare Access 时整站 (含静态页面) 都要过校验, 免得未授权的人至少能看到页面结构。
+// 没有鉴权中间件 —— 桌面版不监听端口, 请求只可能来自自己的 webview。
 func New(cfg *config.Config) http.Handler {
 	api := http.NewServeMux()
 
@@ -56,7 +55,7 @@ func New(cfg *config.Config) http.Handler {
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
 
-	// 静态产物缺失时不让整个服务起不来: API 仍然可用, 页面路由给出明确提示
+	// 静态产物缺失时不让整个程序起不来: API 仍然可用, 页面路由给出明确提示
 	static, err := nextstatic.New(nextstatic.Config{Root: cfg.StaticRoot, TrailingSlash: true})
 	if err != nil {
 		slog.Error("前端静态产物不可用, 仅 API 可访问", "root", cfg.StaticRoot, "err", err)
@@ -66,10 +65,5 @@ func New(cfg *config.Config) http.Handler {
 	} else {
 		root.Handle("/", static)
 	}
-
-	var h http.Handler = root
-	if cfg.AccessEnabled() {
-		h = middleware.NewAccessVerifier(cfg.AccessTeamDomain, cfg.AccessAUD).Middleware(h)
-	}
-	return h
+	return root
 }

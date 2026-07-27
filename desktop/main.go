@@ -49,8 +49,8 @@ func main() {
 		fatal(logPath, fmt.Errorf("释放前端资源失败: %w", err))
 	}
 
-	cfg := config.Desktop(dataDir, staticRoot)
-	if err := initapp.InitWith(cfg); err != nil {
+	cfg := config.New(dataDir, staticRoot)
+	if err := initapp.Init(cfg); err != nil {
 		fatal(logPath, err)
 	}
 

@@ -1,4 +1,4 @@
-name: 桌面版构建
+name: 发版
 
 on:
   push:
@@ -13,6 +13,17 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: 取版本号
+        id: ver
+        shell: bash
+        # tag 触发时用 tag 名, 手动触发时用短 commit, 保证产物名永远能对上一次构建
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-go@v5
         with:
@@ -41,32 +52,38 @@ jobs:
         # -nsis: 顺带出一个安装版, 与绿色版是同一份二进制
         run: wails build -platform windows/amd64 -webview2 embed -skipbindings -s -nsis
 
-      - name: 打包绿色版
+      - name: 打包
         working-directory: desktop/build/bin
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           Copy-Item ../../../README.md .
-          Compress-Archive -Path splitdns.exe,README.md -DestinationPath splitdns-portable-windows-amd64.zip
+          Compress-Archive -Path splitdns.exe,README.md -DestinationPath "splitdns-$env:VERSION-windows-amd64-portable.zip"
+          Move-Item splitdns-amd64-installer.exe "splitdns-$env:VERSION-windows-amd64-installer.exe"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: splitdns-windows-amd64
+          name: splitdns-${{ steps.ver.outputs.version }}-windows-amd64
           path: |
-            desktop/build/bin/splitdns-portable-windows-amd64.zip
-            desktop/build/bin/splitdns-amd64-installer.exe
+            desktop/build/bin/*-portable.zip
+            desktop/build/bin/*-installer.exe
 
       - name: 发布 Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            desktop/build/bin/splitdns-portable-windows-amd64.zip
-            desktop/build/bin/splitdns-amd64-installer.exe
+            desktop/build/bin/*-portable.zip
+            desktop/build/bin/*-installer.exe
+          generate_release_notes: true
           body: |
-            两个版本用的是同一份二进制, 差别只在数据放哪:
+            两个包用的是同一份二进制, 差别只在数据放哪:
 
-            - **安装版** `splitdns-amd64-installer.exe` — 装进 Program Files,
-              数据存在 `%APPDATA%\splitdns`, 升级重装不会动它
-            - **绿色版** `splitdns-portable-windows-amd64.zip` — 解压即用,
-              数据存在 exe 同级的 `data/`, 整个文件夹拷走就带走全部配置和密钥
+            | | 数据位置 | 说明 |
+            |---|---|---|
+            | **安装版** `*-installer.exe` | `%APPDATA%\splitdns` | 常用, 升级重装不动数据 |
+            | **绿色版** `*-portable.zip` | exe 同级 `data/` | 解压即用, 整个文件夹拷走就带走全部配置 |
 
             都不用先装运行时: 机器上没有 WebView2 会自己拉起来装。
+
+            升级方式: 装上/解压覆盖即可, 首次启动会自动更新内置前端, 数据不受影响。

@@ -9,7 +9,7 @@ type Hostname struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 
-	// Hostname 对外主机名, 如 i.czl.net
+	// Hostname 对外主机名, 如 img.example.com
 	Hostname string `gorm:"column:hostname;size:253;uniqueIndex;not null" json:"hostname"`
 	// ParentZone 主域名所在的 CF zone, 委派 NS 加在这里
 	ParentZone string `gorm:"column:parent_zone;size:253;index;not null" json:"parentZone"`

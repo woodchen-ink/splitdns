@@ -22,8 +22,8 @@ func CloudflareZones(ctx context.Context, credentialID uint) ([]string, error) {
 
 // DeriveParentZone 从访问域名推导它所属的 CF 父区。
 //
-// 取"可见 zone 里能匹配上的最长后缀": czl.net 与 sub.czl.net 同时存在时,
-// a.sub.czl.net 属于更具体的 sub.czl.net —— 那才是对它有权威的 zone。
+// 取"可见 zone 里能匹配上的最长后缀": example.com 与 sub.example.com 同时存在时,
+// a.sub.example.com 属于更具体的 sub.example.com —— 那才是对它有权威的 zone。
 func DeriveParentZone(ctx context.Context, credentialID uint, hostname string) (string, error) {
 	host := normalizeName(hostname)
 	if host == "" {

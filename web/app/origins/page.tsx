@@ -83,7 +83,7 @@ export default function OriginsPage() {
             <Input
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              placeholder="KS-5 主力"
+              placeholder="海外源站"
               required
             />
           </div>
@@ -110,7 +110,7 @@ export default function OriginsPage() {
             <Input
               value={draft.value}
               onChange={(e) => setDraft({ ...draft, value: e.target.value })}
-              placeholder="rs2000.20200511.xyz"
+              placeholder="origin.mycdn.net"
               required
             />
           </div>

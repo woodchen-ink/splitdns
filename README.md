@@ -22,31 +22,30 @@ Cloudflare 的权威 DNS 不支持普通记录按地区返回不同答案，而�
 - **域名列表**：所有委派出去的访问域名及其线路落点
 - **配置向导**：一步步把域名配到位。每步标明是程序执行还是手动操作、预计多久生效、已经等了多久；关掉页面回来能续上
 - **巡检**：随时核对三个平台的实际状态，报告委派、遮蔽记录、验证 TXT、线路落点、证书等问题
-- **CLI**：`splitdns check` 可以塞进 cron 做定期巡检
+- **数据搬家**：整库导出 / 导入，换机器、备份都靠它
 
 ## 快速开始
 
-**桌面版（推荐）**：到 [Releases](https://github.com/woodchen-ink/splitdns/releases) 下载绿色版压缩包，解压双击即用。
-不需要安装、不需要域名、不需要登录，密钥只存在你自己机器上。
+到 [Releases](https://github.com/woodchen-ink/splitdns/releases) 下载，两个版本随便挑：
 
-数据放在 exe 同级的 `data/` 目录，整个文件夹拷走就能带走全部配置；exe 放在 Program Files 这类只读位置时会自动回退到用户配置目录。
+| | 数据存在哪 | 适合 |
+|---|---|---|
+| **安装版** `splitdns-*-installer.exe` | `%APPDATA%\splitdns` | 常用，升级重装不动数据 |
+| **绿色版** `splitdns-*-portable.zip` | exe 同级 `data/` | 解压即用，整个文件夹拷走就带走全部配置 |
 
-**服务端版**（要跑定时巡检、或者多台机器共用一份配置时才需要）：
-
-```bash
-docker compose up -d --build
-```
+不需要安装运行时（没有 WebView2 会自己拉起来装），不需要域名，不需要登录——它不监听任何端口，
+密钥只存在你自己机器上。
 
 ## 怎么用：一个完整例子
 
-目标：`i.czl.net` 默认线走 Cloudflare CDN 回源到 rs2000，境内线走腾讯云 EdgeOne。
+目标：`img.example.com` 默认线走 Cloudflare CDN 回源到海外源站，境内线走腾讯云 EdgeOne。
 
 ### 1. 凭据
 
 「凭据」页各加一条，密钥保存后不再回显，只能覆盖。
 
 - **Cloudflare**：API Token，需要 `Zone → Zone → Read`、`Zone → DNS → Edit`、`Zone → SSL and Certificates → Edit`，
-  作用范围要同时覆盖父区 `czl.net` 和 SaaS 区 `20200511.xyz`
+  作用范围要同时覆盖父区 `example.com` 和 SaaS 区 `mycdn.net`
 - **腾讯云 DNSPod**：SecretId / SecretKey
 
 ### 2. 回源
@@ -55,8 +54,8 @@ docker compose up -d --build
 
 | 名称 | 类型 | 落点值 | 源站 IP |
 |---|---|---|---|
-| rs2000 回退源 | CF SaaS 回退源 | `rs2000.20200511.xyz` | `154.36.154.98` |
-| EdgeOne 国内 | 第三方 CDN CNAME | `i.czl.net.eo.dnse2.com` | — |
+| 海外源站 | CF SaaS 落点 | `origin.mycdn.net` | `203.0.113.10` |
+| EdgeOne 国内 | 第三方 CDN CNAME | `img.example.com.eo.dnse2.com` | — |
 
 「源站 IP」只在 SaaS 区里还没有那条橙云记录、需要程序替你建的时候才填；已经建好了就留空。
 
@@ -66,10 +65,10 @@ docker compose up -d --build
 
 「域名 → 新增域名」：
 
-- 访问域名填 `i.czl.net`，选好 Cloudflare 凭据——**父区会自动推导**（拿访问域名去凭据可见的 zone 里找最长后缀匹配），填完就显示推导结果
-- SaaS 区从下拉里选 `20200511.xyz`；不走 CF 就选「不使用 CF for SaaS」
+- 访问域名填 `img.example.com`，选好 Cloudflare 凭据——**父区会自动推导**（拿访问域名去凭据可见的 zone 里找最长后缀匹配），填完就显示推导结果
+- SaaS 区从下拉里选 `mycdn.net`；不走 CF 就选「不使用 CF for SaaS」
 - 选 DNSPod 凭据
-- 线路：`默认 → rs2000 回退源`、`境内 → EdgeOne 国内`。线路落点可以引用「回源」库里的条目，也可以**直接填**——
+- 线路：`默认 → 海外源站`、`境内 → EdgeOne 国内`。线路落点可以引用「回源」库里的条目，也可以**直接填**——
   EdgeOne 那种一个域名一个 CNAME、不会复用的落点，不必先去回源库建条目
 
 **「默认」线是兜底**。只配境内 + 境外，识别不出归属的解析器会一条记录都拿不到，所以把覆盖面最广的那条挂在「默认」上。
@@ -91,43 +90,20 @@ docker compose up -d --build
 ### 5. 已经配好的域名怎么办
 
 照样在「域名」里建条目、填线路，进流程会发现每一步都已完成，直接当巡检面板用。
-`i.czl.net`、`ai.czl.net` 这种存量域名建议都录进来，出问题时一眼能看到差在哪。
+存量域名建议都录进来，出问题时一眼能看到差在哪。
 
-### 6. 定期巡检
+### 6. 换机器 / 备份
 
-```bash
-docker exec splitdns /app/splitdns check
-```
+「数据」页可以整库导出和导入。换机器、重装、想留个备份，都走这里——
+导出的是一致性快照，导入前会自动把现有数据另存一份。
 
-有 error 级问题时退出码非 0，可以直接塞进 cron 或监控。只查某几个：`splitdns check i.czl.net ai.czl.net`。
-
-### 访问控制（仅服务端版）
-
-桌面版不监听端口、也没有鉴权——请求由 Wails 直接交给 handler，没有任何网络入口。
-
-服务端版自己不做登录，认证交给 Cloudflare Access。配上这两个环境变量后，应用会校验边缘下发的身份 JWT：
-
-```bash
-CF_ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com
-CF_ACCESS_AUD=<Access 应用的 AUD tag>
-```
-
-没配 Access 时应用只允许监听回环地址。确实跑在受控网络的反代后面，用 `ALLOW_INSECURE_BIND=true` 显式放行。
+导出文件里有**明文的平台密钥**，当作密钥文件对待。
 
 ## 开发
-
-```bash
-cd server && go run .
-```
-
-```bash
-cd web && npm run dev
-```
-
-桌面版：
 
 ```bash
 cd desktop && wails dev
 ```
 
-前端静态导出后由 Go 一并托管，生产不跑 Node。桌面版把同一份产物嵌进 exe，窗口里跑的还是这套 handler。
+`server/` 是业务本体（API + 巡检 + 平台客户端），`web/` 是界面，`desktop/` 只是把它们装进一个原生窗口。
+前端静态导出后嵌进 exe，运行时摊到数据目录由 Go 托管，生产不跑 Node。

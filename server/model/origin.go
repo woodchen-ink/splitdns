@@ -23,7 +23,7 @@ type Origin struct {
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 
-	// Name 备注名, 如 "KS-5 主力" / "EdgeOne 国内"
+	// Name 备注名, 如 "海外源站" / "EdgeOne 国内"
 	Name string `gorm:"column:name;size:128;not null" json:"name"`
 	// Kind 回源类型, 见上方常量
 	Kind string `gorm:"column:kind;size:32;index;not null" json:"kind"`

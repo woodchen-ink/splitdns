@@ -3,7 +3,7 @@ package service
 import "strings"
 
 // relativeName 把绝对主机名转成相对某个区的主机记录写法, 与 DNSPod 控制台一致。
-// i.czl.net 相对 i.czl.net 得到 "@"; _acme-challenge.i.czl.net 得到 "_acme-challenge"。
+// img.example.com 相对 img.example.com 得到 "@"; _acme-challenge.img.example.com 得到 "_acme-challenge"。
 // 不属于该区时原样返回, 由调用方判定为异常。
 func relativeName(fqdn, zone string) string {
 	f := normalizeName(fqdn)

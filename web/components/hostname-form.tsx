@@ -158,13 +158,13 @@ export function HostnameForm({
           hint={
             parentZone
               ? `父区自动推导为 ${parentZone}`
-              : "对外提供服务的主机名, 如 i.czl.net; 父区由它自动推导"
+              : "对外提供服务的主机名, 如 img.example.com; 父区由它自动推导"
           }
         >
           <Input
             value={draft.hostname}
             onChange={(e) => set("hostname", e.target.value)}
-            placeholder="i.czl.net"
+            placeholder="img.example.com"
             required
           />
         </Field>
@@ -321,7 +321,7 @@ export function HostnameForm({
                     value={route.value}
                     onChange={(e) => setRoute(i, { value: e.target.value })}
                     placeholder={
-                      route.kind === "ip" ? "1.2.3.4" : "i.czl.net.eo.dnse2.com"
+                      route.kind === "ip" ? "203.0.113.10" : "img.example.com.eo.dnse2.com"
                     }
                     className="mt-1"
                   />
