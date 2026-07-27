@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // CredentialKind 是凭据所属平台。开放式取值: 新增平台只加常量与对应 pkg 客户端,
 // 不在各处硬编码分支穷举, 未识别的 kind 由调用方兜底跳过并显式提示。
@@ -36,7 +40,8 @@ type Credential struct {
 func (Credential) TableName() string { return "credential" }
 
 // AfterFind 填充派生字段, 让列表接口能直接渲染"已配置 / 未配置"。
-func (c *Credential) AfterFind() error {
+// 签名必须带 *gorm.DB, 否则 GORM 不认这个钩子, 只会打一条警告然后静默跳过。
+func (c *Credential) AfterFind(_ *gorm.DB) error {
 	c.HasSecret = c.APIToken != "" || c.SecretKey != ""
 	return nil
 }
