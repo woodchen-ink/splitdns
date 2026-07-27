@@ -33,6 +33,7 @@ func New(cfg *config.Config) http.Handler {
 
 	api.HandleFunc("GET /api/credentials", handler.ListCredentials)
 	api.HandleFunc("POST /api/credentials", handler.SaveCredential)
+	api.HandleFunc("POST /api/credentials/{id}/check", handler.CheckCredential)
 	api.HandleFunc("DELETE /api/credentials/{id}", handler.DeleteCredential)
 
 	api.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {

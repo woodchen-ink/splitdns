@@ -201,7 +201,13 @@ export function HostnameForm({
                 onValueChange={(v) => setRoute(i, { originId: Number(v ?? 0) })}
               >
                 <SelectTrigger className="mt-1 w-full">
-                  <SelectValue placeholder="选择回源" />
+                  {/* Base UI 的 Value 默认渲染 value 本身, 要自己把它映射成看得懂的名字 */}
+                  <SelectValue placeholder="选择回源">
+                    {(v) => {
+                      const o = (origins ?? []).find((x) => String(x.id) === String(v));
+                      return o ? `${o.name} · ${o.value}` : "选择回源";
+                    }}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {(origins ?? []).map((o) => (
@@ -273,7 +279,13 @@ function CredSelect({
       onValueChange={(v) => onChange(Number(v ?? 0))}
     >
       <SelectTrigger className="w-full">
-        <SelectValue placeholder="选择凭据" />
+        <SelectValue placeholder="选择凭据">
+          {(v) => {
+            if (allowEmpty && (!v || String(v) === "0")) return "与父区相同";
+            const c = options.find((o) => String(o.id) === String(v));
+            return c ? c.name : "选择凭据";
+          }}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {allowEmpty && <SelectItem value="0">与父区相同</SelectItem>}

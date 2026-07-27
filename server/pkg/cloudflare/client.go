@@ -98,6 +98,31 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return json.Unmarshal(env.Result, out)
 }
 
+// VerifyToken 校验 API Token 是否有效, 返回 CF 给的状态 (active / disabled / expired)。
+func (c *Client) VerifyToken(ctx context.Context) (string, error) {
+	var out struct {
+		Status string `json:"status"`
+	}
+	if err := c.get(ctx, "/user/tokens/verify", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Status, nil
+}
+
+// ListZoneNames 列出该 Token 可见的 zone 名。
+// 用来确认权限范围确实覆盖了要操作的父区与 SaaS 区 —— Token 有效不代表范围够。
+func (c *Client) ListZoneNames(ctx context.Context) ([]string, error) {
+	var zones []zone
+	if err := c.get(ctx, "/zones", url.Values{"per_page": {"50"}}, &zones); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(zones))
+	for _, z := range zones {
+		names = append(names, z.Name)
+	}
+	return names, nil
+}
+
 func joinErrors(errs []apiError) string {
 	if len(errs) == 0 {
 		return "未提供错误详情"

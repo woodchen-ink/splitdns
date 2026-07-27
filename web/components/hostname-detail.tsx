@@ -1,6 +1,7 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
@@ -11,11 +12,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // HostnameDetail 同时承载新增与详情两种形态。
-// 静态导出下这两个 URL 落在同一份模板上, 用路由参数区分, 不额外拆页面。
+// 不能用 useParams 取 id: 静态导出下真实 ID 的请求由 Go 映射到 `_` 占位符模板,
+// 而那份模板在构建时的参数字面量就是 "_", useParams 拿到的永远是它。只能从真实 URL 解析。
 export function HostnameDetail() {
-  const params = useParams<{ hostnameId: string }>();
+  const pathname = usePathname();
   const router = useRouter();
-  const raw = params?.hostnameId ?? "";
+
+  // 构建期 pathname 与浏览器端不同, 挂载后再判定, 避免水合不一致
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const raw = pathname.split("/").filter(Boolean).at(-1) ?? "";
   const isNew = raw === "new";
   const id = Number(raw);
   const valid = !isNew && Number.isFinite(id) && id > 0;
@@ -23,8 +30,12 @@ export function HostnameDetail() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: queryKeys.hostname(id),
     queryFn: () => api.get<Hostname>(`/api/hostnames/${id}`),
-    enabled: valid,
+    enabled: mounted && valid,
   });
+
+  if (!mounted) {
+    return <Skeleton className="h-64 w-full rounded-xl" />;
+  }
 
   if (isNew) {
     return (

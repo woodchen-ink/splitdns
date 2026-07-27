@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
-import type { Credential } from "@/lib/types";
+import type { Credential, CredentialCheck } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +36,22 @@ export default function CredentialsPage() {
       toast.success("已保存");
       setDraft(EMPTY);
       qc.invalidateQueries({ queryKey: queryKeys.credentials() });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // 检测结果按凭据 id 存, 让每行各自显示自己的结论
+  const [checks, setChecks] = useState<Record<number, CredentialCheck>>({});
+  const check = useMutation({
+    mutationFn: (id: number) =>
+      api.post<CredentialCheck>(`/api/credentials/${id}/check`).then((r) => ({ id, r })),
+    onSuccess: ({ id, r }) => {
+      setChecks((c) => ({ ...c, [id]: r }));
+      if (r.ok) {
+        toast.success(r.message);
+      } else {
+        toast.error(r.message);
+      }
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -77,7 +93,15 @@ export default function CredentialsPage() {
               disabled={draft.id !== 0}
             >
               <SelectTrigger className="w-full">
-                <SelectValue />
+                <SelectValue>
+                  {(v) =>
+                    String(v) === "cloudflare"
+                      ? "Cloudflare"
+                      : String(v) === "dnspod"
+                        ? "腾讯云 DNSPod"
+                        : String(v ?? "")
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="cloudflare">Cloudflare</SelectItem>
@@ -146,16 +170,43 @@ export default function CredentialsPage() {
         {(data ?? []).map((c) => (
           <div
             key={c.id}
-            className="border-border/60 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
+            className="border-border/60 flex flex-wrap items-start justify-between gap-3 rounded-xl border p-4"
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{c.name}</span>
-              <Badge variant="outline" className="font-normal">
-                {c.kind === "cloudflare" ? "Cloudflare" : "腾讯云 DNSPod"}
-              </Badge>
-              {!c.hasSecret && <Badge variant="secondary">未填密钥</Badge>}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{c.name}</span>
+                <Badge variant="outline" className="font-normal">
+                  {c.kind === "cloudflare" ? "Cloudflare" : "腾讯云 DNSPod"}
+                </Badge>
+                {!c.hasSecret && <Badge variant="secondary">未填密钥</Badge>}
+                {checks[c.id] && (
+                  <Badge
+                    variant="secondary"
+                    className={
+                      checks[c.id].ok
+                        ? "border-0 bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"
+                        : "border-0 bg-red-500/12 text-red-700 dark:text-red-400"
+                    }
+                  >
+                    {checks[c.id].message}
+                  </Badge>
+                )}
+              </div>
+              {(checks[c.id]?.scope ?? []).length > 0 && (
+                <p className="text-muted-foreground mt-1.5 font-mono text-xs break-all">
+                  可见范围: {(checks[c.id].scope ?? []).join(", ")}
+                </p>
+              )}
             </div>
             <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => check.mutate(c.id)}
+                disabled={check.isPending}
+              >
+                {check.isPending ? "检测中…" : "检测"}
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

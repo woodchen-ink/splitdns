@@ -12,6 +12,12 @@ export interface Credential {
   secretKey?: string;
 }
 
+export interface CredentialCheck {
+  ok: boolean;
+  message: string;
+  scope: string[] | null;
+}
+
 export interface Origin {
   id: number;
   name: string;

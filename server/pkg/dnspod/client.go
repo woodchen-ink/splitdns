@@ -64,6 +64,25 @@ func (c *Client) DescribeDomain(ctx context.Context, domain string) (*Domain, er
 	return d, nil
 }
 
+// CountDomains 返回该账号下的域名数量, 用来验证凭据可用。
+// 拿不到就是凭据无效或权限不足, 错误信息里带上腾讯云的错误码方便对照。
+func (c *Client) CountDomains(ctx context.Context) (uint64, error) {
+	req := dnspod.NewDescribeDomainListRequest()
+	req.Limit = common.Int64Ptr(1)
+
+	resp, err := c.api.DescribeDomainListWithContext(ctx, req)
+	if err != nil {
+		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {
+			return 0, fmt.Errorf("%s %s", sdkErr.Code, sdkErr.Message)
+		}
+		return 0, err
+	}
+	if resp.Response == nil || resp.Response.DomainCountInfo == nil || resp.Response.DomainCountInfo.AllTotal == nil {
+		return 0, nil
+	}
+	return *resp.Response.DomainCountInfo.AllTotal, nil
+}
+
 // Record 是一条解析记录。
 type Record struct {
 	Name    string

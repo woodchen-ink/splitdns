@@ -9,6 +9,14 @@ import (
 	"github.com/woodchen-ink/splitdns/server/pkg/dnspod"
 )
 
+// credentialRecord 按 ID 读一份凭据, 不校验平台。
+func credentialRecord(id uint, out *model.Credential) error {
+	if err := database.DB.First(out, id).Error; err != nil {
+		return fmt.Errorf("读取凭据 %d 失败: %w", id, err)
+	}
+	return nil
+}
+
 // credentialByID 读一份凭据, 并校验它确实属于期望的平台。
 // 配错平台 (把腾讯云凭据挂到 CF 字段上) 是很容易犯的错, 这里直接拦掉而不是等 API 报鉴权失败。
 func credentialByID(id uint, wantKind string) (*model.Credential, error) {

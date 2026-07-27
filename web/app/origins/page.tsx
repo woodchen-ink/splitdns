@@ -91,7 +91,9 @@ export default function OriginsPage() {
             <Label>类型</Label>
             <Select value={draft.kind} onValueChange={(v) => setDraft({ ...draft, kind: v ?? draft.kind })}>
               <SelectTrigger className="w-full">
-                <SelectValue />
+                <SelectValue>
+                  {(v) => KINDS.find((k) => k.value === String(v))?.label ?? String(v ?? "")}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {KINDS.map((k) => (
