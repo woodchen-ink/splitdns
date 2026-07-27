@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/woodchen-ink/go-web-utils/resputil"
 	"github.com/woodchen-ink/splitdns/server/service"
@@ -35,11 +37,15 @@ func ExportDatabase(w http.ResponseWriter, r *http.Request) {
 const maxImportSize = 64 << 20
 
 // ImportDatabase POST /api/import/db 用上传的库文件整体替换当前数据。
+//
+// 请求体两种形态都收: multipart 表单, 或者直接把文件字节当 body。
+// 后者少一层封装, 桌面版的 webview 里更稳。
 func ImportDatabase(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportSize)
-	file, header, err := r.FormFile("file")
+
+	file, name, err := importSource(r)
 	if err != nil {
-		resputil.Fail(w, 400, "没读到上传的文件: "+err.Error())
+		resputil.Fail(w, 400, err.Error())
 		return
 	}
 	defer file.Close()
@@ -52,13 +58,20 @@ func ImportDatabase(w http.ResponseWriter, r *http.Request) {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
-	if _, err := io.Copy(tmp, file); err != nil {
+	written, err := io.Copy(tmp, file)
+	if err != nil {
 		tmp.Close()
 		resputil.Fail(w, 400, "接收文件失败: "+err.Error())
 		return
 	}
 	if err := tmp.Close(); err != nil {
 		resputil.Fail(w, 500, err.Error())
+		return
+	}
+	// 收到空文件时说清楚是"没收到内容", 而不是等校验时报"缺表" ——
+	// 空文件在 SQLite 眼里是合法的空库, 那条报错会把人引向完全错误的方向
+	if written == 0 {
+		resputil.Fail(w, 400, "收到的文件是空的, 一个字节都没有")
 		return
 	}
 
@@ -68,5 +81,25 @@ func ImportDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resputil.OKMsg(w, map[string]string{"backupPath": backup},
-		fmt.Sprintf("已导入 %s, 原有数据备份在 %s", header.Filename, backup))
+		fmt.Sprintf("已导入 %s, 原有数据备份在 %s", name, backup))
+}
+
+// importSource 从请求里取出待导入的文件, 兼容 multipart 与裸 body 两种发法。
+func importSource(r *http.Request) (io.ReadCloser, string, error) {
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			return nil, "", fmt.Errorf("没读到上传的文件: %w", err)
+		}
+		return file, header.Filename, nil
+	}
+
+	name := r.Header.Get("X-File-Name")
+	if decoded, err := url.QueryUnescape(name); err == nil {
+		name = decoded
+	}
+	if name == "" {
+		name = "上传的文件"
+	}
+	return r.Body, name, nil
 }

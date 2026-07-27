@@ -15,9 +15,16 @@ export default function DataPage() {
 
   const importDb = useMutation({
     mutationFn: async (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      const resp = await fetch("/api/import/db", { method: "POST", body: form });
+      // 直接把文件字节当请求体发, 不走 multipart —— 少一层封装,
+      // 桌面版的 webview 里更不容易出岔子
+      const resp = await fetch("/api/import/db", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-File-Name": encodeURIComponent(file.name),
+        },
+        body: file,
+      });
       const body = await resp.json();
       if (body.code !== 200) {
         throw new ApiError(body.code, body.msg || "导入失败");

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"io"
@@ -82,8 +83,31 @@ func ImportDatabase(uploadPath string) (backupPath string, err error) {
 	return backupPath, nil
 }
 
+// sqliteMagic 是 SQLite 文件头。先认它能把"这压根不是数据库"和"是数据库但不是我们的"
+// 分开报, 否则空文件会被当成合法空库, 报出来的是"缺 credential 表", 方向完全带偏。
+var sqliteMagic = append([]byte("SQLite format 3"), 0)
+
 // validateImport 确认这是一个本工具的库文件, 而不是随便一个 SQLite 文件。
 func validateImport(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("读不到上传的文件: %w", err)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("上传的文件是空的")
+	}
+
+	head := make([]byte, len(sqliteMagic))
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("打不开上传的文件: %w", err)
+	}
+	n, _ := io.ReadFull(f, head)
+	f.Close()
+	if n < len(sqliteMagic) || !bytes.Equal(head, sqliteMagic) {
+		return fmt.Errorf("这不是一个 SQLite 数据库文件 (大小 %d 字节)", info.Size())
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return fmt.Errorf("打不开上传的文件: %w", err)
