@@ -27,21 +27,32 @@ func Init(path string) error {
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
+		// 不建外键约束: route.origin_id 为 0 表示这条线路用内联落点、不引用回源库,
+		// 有约束的话这个 0 会被直接挡掉。引用完整性由 service 层在删除时自己把关
+		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {
 		return fmt.Errorf("打开数据库失败: %w", err)
 	}
+
 	// 新增 model 必须同步登记到这里, 漏了不会有编译错误, 只会在运行时报 no such table
-	if err := db.AutoMigrate(
-		&model.Credential{},
-		&model.Origin{},
-		&model.Hostname{},
-		&model.Route{},
-		&model.Plan{},
-		&model.Step{},
-	); err != nil {
+	migrate := func() error {
+		return db.AutoMigrate(
+			&model.Credential{},
+			&model.Origin{},
+			&model.Hostname{},
+			&model.Route{},
+			&model.Plan{},
+			&model.Step{},
+		)
+	}
+	if err := dropLegacyRouteFK(db, migrate); err != nil {
+		return err
+	}
+	if err := migrate(); err != nil {
 		return fmt.Errorf("自动迁移失败: %w", err)
 	}
+
 	DB = db
 	return nil
 }
