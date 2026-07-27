@@ -8,6 +8,7 @@ const NAV = [
   { href: "/", label: "域名" },
   { href: "/origins/", label: "回源" },
   { href: "/credentials/", label: "凭据" },
+  { href: "/data/", label: "数据" },
 ];
 
 // AppHeader 是全站唯一导航。当前项按路径前缀高亮, 首页只在完全匹配时高亮,

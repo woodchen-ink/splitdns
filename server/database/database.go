@@ -14,6 +14,9 @@ import (
 // DB 是全局数据库句柄, 由 Init 赋值。
 var DB *gorm.DB
 
+// currentPath 记住当前库文件位置, 导入时要先关掉它再换文件。
+var currentPath string
+
 // Init 打开 SQLite 数据库文件并执行自动迁移。
 // 目录不存在时自动创建, 便于容器里直接挂一个空卷。
 func Init(path string) error {
@@ -54,5 +57,23 @@ func Init(path string) error {
 	}
 
 	DB = db
+	currentPath = path
 	return nil
+}
+
+// Path 返回当前库文件路径。
+func Path() string { return currentPath }
+
+// Close 关闭当前连接。换库文件前必须先关, 否则 Windows 上文件被占用改不动,
+// 而且已打开的句柄还指着旧 inode。
+func Close() error {
+	if DB == nil {
+		return nil
+	}
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return err
+	}
+	DB = nil
+	return sqlDB.Close()
 }
