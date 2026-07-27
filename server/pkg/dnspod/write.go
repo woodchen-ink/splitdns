@@ -23,11 +23,15 @@ func (c *Client) CreateDomain(ctx context.Context, domain string) error {
 
 	if _, err := c.api.CreateDomainWithContext(ctx, req); err != nil {
 		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {
-			if sdkErr.Code == "InvalidParameter.DomainExists" || sdkErr.Code == "InvalidParameter.DomainIsAliasDomain" {
+			// 腾讯云同一个语义会挂在不同前缀下 (InvalidParameter. / FailedOperation. ...),
+			// 所以按后缀判定, 不硬编码整串错误码
+			switch {
+			case strings.Contains(sdkErr.Code, "DomainExists"),
+				strings.Contains(sdkErr.Code, "DomainIsAliasDomain"):
+				// 已经加过了, 对幂等流程来说就是成功
 				return nil
-			}
-			// 主域名不在这个腾讯云账号下时, 添加子域名要先证明归属
-			if strings.Contains(sdkErr.Code, "Quhui") || strings.Contains(sdkErr.Code, "Verif") {
+			case strings.Contains(sdkErr.Code, "Quhui"), strings.Contains(sdkErr.Code, "Verif"):
+				// 主域名不在这个腾讯云账号下时, 添加子域名要先证明归属
 				return fmt.Errorf("%w: %s", ErrNeedOwnershipTXT, sdkErr.Message)
 			}
 			return fmt.Errorf("添加域名 %s 失败: %s %s", domain, sdkErr.Code, sdkErr.Message)
