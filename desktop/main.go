@@ -7,6 +7,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	// 把时区数据库嵌进二进制: Windows 自身没有 tzdata, Go 默认去 GOROOT 找,
+	// 没装 Go 的机器上 time.LoadLocation 会失败, 进而在启动时 panic
+	_ "time/tzdata"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -26,19 +29,27 @@ var assets embed.FS
 func main() {
 	dataDir, err := resolveDataDir()
 	if err != nil {
-		fatal(err)
+		fatal("", err)
+	}
+	// GUI 程序没有控制台, 启动失败什么都看不到, 所以先把日志落到文件
+	logPath := filepath.Join(dataDir, "splitdns.log")
+	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		defer f.Close()
+		log.SetOutput(f)
+		os.Stdout = f
+		os.Stderr = f
 	}
 
 	// nextstatic 按目录读文件, 所以把嵌进二进制的产物先摊到数据目录再交给它,
 	// 这样静态托管行为与服务端完全一致 (trailing slash / RSC 头 / 目录索引)
 	staticRoot := filepath.Join(dataDir, "web")
 	if err := extractAssets(staticRoot); err != nil {
-		fatal(fmt.Errorf("释放前端资源失败: %w", err))
+		fatal(logPath, fmt.Errorf("释放前端资源失败: %w", err))
 	}
 
 	cfg := config.Desktop(dataDir, staticRoot)
 	if err := initapp.InitWith(cfg); err != nil {
-		fatal(err)
+		fatal(logPath, err)
 	}
 
 	err = wails.Run(&options.App{
@@ -51,7 +62,7 @@ func main() {
 		},
 	})
 	if err != nil {
-		fatal(err)
+		fatal(logPath, err)
 	}
 }
 
@@ -138,6 +149,14 @@ func assetsUpToDate(sub fs.FS, root string) bool {
 	return embedded.Size() == onDisk.Size()
 }
 
-func fatal(err error) {
-	log.Fatalf("splitdns 启动失败: %v", err)
+// fatal 记录启动失败并弹窗告知, 而不是让窗口一闪而过 ——
+// GUI 程序退出得无声无息时, 用户能拿到的信息是零。
+func fatal(logPath string, err error) {
+	log.Printf("splitdns 启动失败: %v", err)
+	msg := fmt.Sprintf("splitdns 启动失败:\n\n%v", err)
+	if logPath != "" {
+		msg += fmt.Sprintf("\n\n详细日志: %s", logPath)
+	}
+	alert("splitdns 启动失败", msg)
+	os.Exit(1)
 }
