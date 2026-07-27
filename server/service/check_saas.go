@@ -79,16 +79,51 @@ func checkSaaS(h model.Hostname, snap model.Snapshot) []model.Finding {
 	if f, ok := checkCertExpiry(ch.CertExpiresAt); ok {
 		out = append(out, f)
 	}
-	if ch.CustomOrigin != "" {
-		out = append(out, model.Finding{
+	return append(out, checkCustomOrigin(h, ch)...)
+}
+
+// checkCustomOrigin 比对配置里的自定义源服务器与 CF 上实际生效的值。
+//
+// 自定义源服务器不是解析目标: 解析永远指向 SaaS 区的回退源, 请求到了 CF 边缘之后,
+// CF 才按自定义主机名上的这个字段决定往哪台机器转。所以它只能在 CF 上核对, 不在 DNS 里核对。
+func checkCustomOrigin(h model.Hostname, ch model.CustomHostnameState) []model.Finding {
+	want := findOrigin(h, model.OriginSaaSCustom)
+
+	if want == nil {
+		if ch.CustomOrigin == "" {
+			return nil
+		}
+		return []model.Finding{{
 			Level:  model.LevelWarn,
-			Code:   "saas.custom_origin_sni",
-			Title:  "使用了自定义源服务器, 源站必须能路由这个 SNI",
-			Detail: fmt.Sprintf("源服务器 %s, SNI %s", ch.CustomOrigin, orNone(ch.CustomOriginSNI)),
-			Fix:    "在那台机器上给这个 SNI 名字挂一个 router/vhost, 指向哪个服务都行; 缺了会直接回源 403。这一项程序无法自动验证",
-		})
+			Code:   "saas.custom_origin_undeclared",
+			Title:  "CF 上配了自定义源服务器, 但这里没登记",
+			Detail: fmt.Sprintf("CF 实际值 %s", ch.CustomOrigin),
+			Fix:    "在线路里加一条「CF SaaS 自定义源」类型的落点登记它, 或者确认这个源是不是该去掉",
+		}}
 	}
-	return out
+
+	if !sameName(ch.CustomOrigin, want.Value) {
+		return []model.Finding{{
+			Level:  model.LevelError,
+			Code:   "saas.custom_origin_mismatch",
+			Title:  "CF 上的自定义源服务器与配置不符",
+			Detail: fmt.Sprintf("CF 实际 %s / 配置 %s", orNone(ch.CustomOrigin), want.Value),
+			Fix:    "在「添加自定义主机名」那一步点自动执行, 程序会把它改过去",
+		}}
+	}
+
+	sni := want.SNI
+	if sni == "" {
+		sni = want.Value
+	}
+	return []model.Finding{{
+		Level:  model.LevelWarn,
+		Code:   "saas.custom_origin_sni",
+		Title:  "使用了自定义源服务器, 源站必须能路由这个 SNI",
+		Detail: fmt.Sprintf("源服务器 %s, SNI %s", ch.CustomOrigin, orNone(ch.CustomOriginSNI)),
+		Fix: fmt.Sprintf("在那台机器上给 %s 挂一个 router/vhost, 指向哪个服务、有没有证书都无所谓; "+
+			"缺了会直接回源 403。这一项程序无法自动验证", sni),
+	}}
 }
 
 // checkCertExpiry 检查证书剩余有效期。解析不了的时间格式不报错, 只是不检查。

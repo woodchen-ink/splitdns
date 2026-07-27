@@ -36,10 +36,14 @@ type NewRecord struct {
 	TTL       uint64
 }
 
-// CreateRecord 添加一条解析记录。TTL 默认 120 秒, 切换期间好回滚。
+// DefaultTTL 是新建记录用的 TTL。
+// DNSPod 免费版最低只能到 600 秒, 填更小的值会被接口直接拒掉。
+const DefaultTTL = 600
+
+// CreateRecord 添加一条解析记录。
 func (c *Client) CreateRecord(ctx context.Context, domain string, r NewRecord) error {
 	if r.TTL == 0 {
-		r.TTL = 120
+		r.TTL = DefaultTTL
 	}
 	req := dnspod.NewCreateRecordRequest()
 	req.Domain = common.StringPtr(domain)

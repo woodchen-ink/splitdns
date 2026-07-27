@@ -126,7 +126,7 @@ func refreshInstruction(step *model.Step, h model.Hostname, snap model.Snapshot)
 			}
 			fmt.Fprintf(&b, "  线路 %s   %s   值 %s\n", route.Line, recordTypeFor(want), want)
 		}
-		b.WriteString("TTL 先给 120 秒。CF 那条务必挂在「默认」线兜底, 只配境内+境外会让识别不出归属的解析器拿不到记录。")
+		b.WriteString("TTL 用 600 秒(DNSPod 免费版最低)。CF 那条务必挂在「默认」线兜底, 只配境内+境外会让识别不出归属的解析器拿不到记录。")
 		step.Instruction = b.String()
 
 	case "cf.delegation":

@@ -56,6 +56,16 @@ type NewCustomHostname struct {
 	CustomOriginSNI    string `json:"custom_origin_sni,omitempty"`
 }
 
+// UpdateCustomOrigin 改自定义主机名的源服务器与 SNI。
+// 两个值传空表示回到默认回退源。
+func (c *Client) UpdateCustomOrigin(ctx context.Context, zoneID, hostnameID, origin, sni string) error {
+	payload := map[string]any{
+		"custom_origin_server": origin,
+		"custom_origin_sni":    sni,
+	}
+	return c.do(ctx, http.MethodPatch, "/zones/"+zoneID+"/custom_hostnames/"+hostnameID, nil, payload, nil)
+}
+
 // CreateCustomHostname 创建自定义主机名。
 // 验证方式固定 TXT: 解析尚未切到 CF 时 HTTP 验证必然失败, 这是配置顺序决定的, 不给调用方选错的机会。
 func (c *Client) CreateCustomHostname(ctx context.Context, zoneID, hostname, customOrigin, sni string) (*CustomHostname, error) {

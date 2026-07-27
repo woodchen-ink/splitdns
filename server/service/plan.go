@@ -104,7 +104,7 @@ func buildSteps(h model.Hostname) []model.Step {
 		Key:         "dnspod.routes",
 		Title:       "配置分线路解析记录",
 		Mode:        model.StepManual,
-		Instruction: "等这一步刷新出具体记录值后再操作。TTL 先调到 60~120 秒, 切换出问题好回滚。",
+		Instruction: "等这一步刷新出具体记录值后再操作。TTL 用 600 秒 —— DNSPod 免费版最低就是它, 填更小会被拒。",
 		ETASeconds:  300,
 		Verifiable:  true,
 	})
