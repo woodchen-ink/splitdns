@@ -96,12 +96,16 @@ export function LoginScreen({ session }: { session: Session }) {
             {start.isPending ? "正在打开浏览器…" : waiting ? "重新发起授权" : "使用 CZL Connect 登录"}
           </Button>
 
-          {waiting && (
-            <p className="text-muted-foreground text-center text-sm leading-relaxed">
-              已在浏览器中打开授权页, 点完同意就会自动回到这里。
-              <br />
-              浏览器那个标签页会停在原地不动, 属正常现象, 直接关掉即可。
-            </p>
+          {session.exchanging ? (
+            <p className="text-center text-sm">正在完成登录…</p>
+          ) : (
+            waiting && (
+              <p className="text-muted-foreground text-center text-sm leading-relaxed">
+                已在浏览器中打开授权页, 点完同意就会自动回到这里。
+                <br />
+                浏览器那个标签页会停在原地不动, 属正常现象, 直接关掉即可。
+              </p>
+            )
           )}
 
           {authorizeUrl && (

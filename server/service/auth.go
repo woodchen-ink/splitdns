@@ -36,14 +36,20 @@ const (
 // 授权码本身寿命更短, 与其拿一个必然失败的码去换令牌, 不如直接说清楚是等太久了。
 const pendingTTL = 10 * time.Minute
 
-// pendingLogin 是一次已发起、尚未回跳的授权。
+// pendingLogin 是一次已发起、尚未收尾的授权。
 //
 // 只放内存, 不落库: verifier 是这次流程的一次性秘密, 进程都退出了, 那次授权本来就该作废。
 // 代价是"应用关掉后才在浏览器里点同意"这种情况必须重新发起, 提示里会讲清楚。
+//
+// **收到回调不等于流程结束**: 后面还要换令牌、拉用户信息, 那是两次网络请求。
+// 这段时间里流程必须仍然算"进行中" —— 否则前端看到的是"既没在等待也没有错误",
+// 会据此停掉轮询, 之后无论成功失败都没人再来看一眼, 界面就永远停在登录页。
 type pendingLogin struct {
 	state     string
 	verifier  string
 	startedAt time.Time
+	// exchanging 表示回调已经到手, 正在换令牌
+	exchanging bool
 }
 
 var (
@@ -99,61 +105,71 @@ func StartLogin() (string, error) {
 // 调用方有两个: 桌面壳收到 splitdns:// 唤起时, 以及用户手动把回跳地址粘回来时。
 // 失败原因会记在会话里 —— 前一种情况下前端并没有一个正在等待的请求能接住这个错误,
 // 不记下来的话界面就只是一直转圈, 什么都不说。
+//
+// **收尾必须是一次上锁完成的**: 清掉流程和记下失败原因中间不能留缝,
+// 否则前端正好在那一瞬间轮询到, 看到的就是"没在等待、也没出错", 于是停掉轮询再也不问了。
 func CompleteLogin(ctx context.Context, rawURL string) error {
-	err := completeLogin(ctx, rawURL)
-	authMu.Lock()
-	if err != nil {
-		lastLoginError = err.Error()
-	}
-	authMu.Unlock()
+	owned, err := completeLogin(ctx, rawURL)
+	finishFlow(owned, err)
 	return err
 }
 
-func completeLogin(ctx context.Context, rawURL string) error {
+// completeLogin 返回它真正接手的那次流程 —— 没接手到就是 nil, 收尾时据此判断有没有资格清掉它。
+func completeLogin(ctx context.Context, rawURL string) (*pendingLogin, error) {
 	if authClient == nil {
-		return errors.New("登录功能未初始化")
+		return nil, errors.New("登录功能未初始化")
 	}
 	code, state, err := parseCallback(rawURL)
 	if err != nil {
-		// 服务端明确拒绝时, 手上那次 pending 也没有意义了
-		clearPending()
-		return err
+		// 服务端明确拒绝时, 被拒的如果正是手上这次流程, 它就到此为止
+		return flowByState(state), err
 	}
-	flow, err := takePending(state)
+	flow, err := beginExchange(state)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	tok, err := authClient.Exchange(ctx, code, flow.verifier)
 	if err != nil {
-		return fmt.Errorf("用授权码换令牌失败: %w", err)
+		return flow, fmt.Errorf("用授权码换令牌失败: %w", err)
 	}
 	info, err := authClient.UserInfo(ctx, tok.AccessToken)
 	if err != nil {
-		return fmt.Errorf("拉取用户信息失败: %w", err)
+		return flow, fmt.Errorf("拉取用户信息失败: %w", err)
 	}
-	return saveAccount(tok, info)
+	return flow, saveAccount(tok, info)
 }
 
 // parseCallback 从回跳地址里取出授权码与 state。
 //
 // 授权失败时服务端不会给 code, 而是把 error 挂在查询串上。这两种情况必须分开报:
 // 一个是"流程没走通", 一个是"对方明确拒绝了", 用户要做的事完全不同。
+// 出错时 state 照样往外带 —— 调用方要靠它认出被拒的到底是不是手上这次流程。
 func parseCallback(raw string) (code, state string, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return "", "", fmt.Errorf("回调地址解析失败: %w", err)
 	}
 	q := u.Query()
+	state = q.Get("state")
 	if e := q.Get("error"); e != "" {
-		return "", "", fmt.Errorf("授权未通过: %s", describeAuthError(e, q.Get("error_description")))
+		return "", state, fmt.Errorf("授权未通过: %s", describeAuthError(e, q.Get("error_description")))
 	}
 	code = q.Get("code")
-	state = q.Get("state")
 	if code == "" {
-		return "", "", errors.New("回调地址里没有授权码, 这不像一次完整的授权回跳")
+		return "", state, errors.New("回调地址里没有授权码, 这不像一次完整的授权回跳")
 	}
 	return code, state, nil
+}
+
+// flowByState 找出 state 对得上的那次流程, 对不上或者压根没带 state 时返回 nil。
+func flowByState(state string) *pendingLogin {
+	authMu.Lock()
+	defer authMu.Unlock()
+	if pending != nil && state != "" && subtle.ConstantTimeCompare([]byte(pending.state), []byte(state)) == 1 {
+		return pending
+	}
+	return nil
 }
 
 // authErrorText 只翻译文档里明确列出的那几个。
@@ -176,15 +192,20 @@ func describeAuthError(code, description string) string {
 	return text
 }
 
-// takePending 校验 state 并把这次流程取走 —— 一次性, 用过即废, 同一个授权码不会被重放两次。
-func takePending(state string) (*pendingLogin, error) {
+// beginExchange 校验 state 并把流程标成"换令牌中"。
+//
+// 标记而不是取走: 换令牌那一两秒里流程仍然要算进行中 (见 pendingLogin 上的说明)。
+// 标记本身也是防重放 —— 同一个授权码再回来一次会撞上这里, 不会被换第二遍。
+func beginExchange(state string) (*pendingLogin, error) {
 	authMu.Lock()
 	defer authMu.Unlock()
 
 	flow := pending
-	pending = nil
 	if flow == nil {
 		return nil, errors.New("当前没有正在进行的登录, 请回到应用里重新点一次登录")
+	}
+	if flow.exchanging {
+		return nil, errors.New("上一次回调正在处理中")
 	}
 	if timex.Now().Sub(flow.startedAt) > pendingTTL {
 		return nil, errors.New("这次登录等待过久已作废, 请重新发起")
@@ -192,7 +213,27 @@ func takePending(state string) (*pendingLogin, error) {
 	if subtle.ConstantTimeCompare([]byte(flow.state), []byte(state)) != 1 {
 		return nil, errors.New("回调的 state 与本次登录对不上, 已拒绝")
 	}
+	flow.exchanging = true
 	return flow, nil
+}
+
+// finishFlow 给一次授权收尾: 清掉流程, 失败的话把原因留下。
+//
+// 两件事必须在同一把锁里做完 —— 中间露出的那一瞬间在前端看来就是"没在等待也没出错",
+// 它会据此停掉轮询, 于是后面无论成功失败都再没人来看一眼。
+//
+// **只有真正接手过这次流程的那一路才能清掉它**: 浏览器那个停住的标签页刷新一下就会把回调再发一次,
+// 而那时用户可能已经重新点过登录了。拿一条过期的回调去清掉手上正跑着的流程,
+// 等于把用户刚发起的那次登录判死。
+func finishFlow(owned *pendingLogin, err error) {
+	authMu.Lock()
+	if owned != nil && pending == owned {
+		pending = nil
+	}
+	if err != nil {
+		lastLoginError = err.Error()
+	}
+	authMu.Unlock()
 }
 
 func clearPending() {
@@ -235,17 +276,18 @@ func saveAccount(tok *czlconnect.Token, info *czlconnect.UserInfo) error {
 }
 
 // CurrentAccount 读当前登录账号, 没有登录时返回 nil 而不是错误。
+//
+// 用 Find 而不是 First: 单行表本来就常常是空的, 而 First 会为此报 ErrRecordNotFound 并打一条警告 ——
+// 未登录时前端在按秒轮询登录状态, 那条警告会把日志刷满。
 func CurrentAccount() (*model.Account, error) {
-	var account model.Account
-	// 单行表, 不必按 ID 找
-	err := database.DB.First(&account).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
+	var accounts []model.Account
+	if err := database.DB.Limit(1).Find(&accounts).Error; err != nil {
 		return nil, fmt.Errorf("读取登录状态失败: %w", err)
 	}
-	return &account, nil
+	if len(accounts) == 0 {
+		return nil, nil
+	}
+	return &accounts[0], nil
 }
 
 // IsLoggedIn 判断这次请求该不该放行。只查本地, 不碰网络 ——
@@ -276,8 +318,10 @@ func Logout() error {
 type Session struct {
 	Status string         `json:"status"`
 	User   *model.Account `json:"user"`
-	// Waiting 表示有一次授权已经发起, 正等着浏览器回跳; 前端据此决定要不要轮询
+	// Waiting 表示有一次授权正在进行 (等浏览器回跳, 或回跳已到手正在换令牌)
 	Waiting bool `json:"waiting"`
+	// Exchanging 表示回调已经到手, 正在换令牌 —— 界面据此把话说准, 别还在喊"请到浏览器完成授权"
+	Exchanging bool `json:"exchanging"`
 	// LoginError 上一次授权回跳失败的原因。回跳是从进程外面进来的, 只能这样带给界面
 	LoginError string `json:"loginError"`
 	// TokenError 最近一次刷新令牌失败的原因。属于"暂时没刷上", 不影响继续使用
@@ -295,7 +339,11 @@ func LoadSession(ctx context.Context) (*Session, error) {
 
 	session := &Session{Status: SessionGuest}
 	authMu.Lock()
-	session.Waiting = pending != nil && timex.Now().Sub(pending.startedAt) <= pendingTTL
+	if pending != nil {
+		// 换令牌中的流程不看 TTL: 那一步是我们自己在跑, 不是在等用户
+		session.Exchanging = pending.exchanging
+		session.Waiting = pending.exchanging || timex.Now().Sub(pending.startedAt) <= pendingTTL
+	}
 	session.LoginError = lastLoginError
 	authMu.Unlock()
 

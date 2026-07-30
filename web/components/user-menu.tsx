@@ -13,6 +13,7 @@ const GUEST_SESSION: Session = {
   status: "guest",
   user: null,
   waiting: false,
+  exchanging: false,
   loginError: "",
   tokenError: "",
 };

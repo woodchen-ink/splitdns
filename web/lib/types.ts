@@ -217,8 +217,10 @@ export type SessionStatus = "guest" | "active" | "expired";
 export interface Session {
   status: SessionStatus | string;
   user: AuthUser | null;
-  // waiting 表示已经跳去浏览器授权、正等着回跳; 前端据此决定要不要轮询
+  // waiting 表示一次授权正在进行中 (等浏览器回跳, 或回跳已到手正在换令牌)
   waiting: boolean;
+  // exchanging 表示回调已经到手, 正在换令牌
+  exchanging: boolean;
   // loginError 上一次授权回跳失败的原因 —— 回跳发生在应用外面, 只能这样带回界面
   loginError: string;
   // tokenError 最近一次刷新令牌失败的原因; 属于暂时没刷上, 不影响继续使用

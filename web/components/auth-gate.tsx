@@ -17,9 +17,20 @@ export function AuthGate({ children }: { children: ReactNode }) {
     queryKey: queryKeys.session(),
     queryFn: () => api.get<Session>("/api/auth/session"),
     // 授权在系统浏览器里完成, 回跳进的是 Go 那一侧, 前端没有任何回调可接 —— 只能轮询。
-    // 只在等待期间开, 平时一次都不多问。1s 一次是为了回跳之后立刻翻页:
-    // 这几秒用户正盯着看, 拖两拍就像卡住了, 而这个请求只查本地一行
-    refetchInterval: (query) => (query.state.data?.waiting ? 1000 : false),
+    //
+    // **判据是"还没登录"而不是"正在等回跳"**: 后者要求后端的流程状态一刻不差地跟着变,
+    // 中间但凡有一瞬间显示成"没在等待", 轮询就停了, 之后回调成功也没人来看一眼 (踩过)。
+    // 登录进去就完全停掉; 没登录时这个请求只读本地一行, 一秒一次也不心疼
+    refetchInterval: (query) => {
+      const session = query.state.data;
+      if (!session || session.status === "active") {
+        return false;
+      }
+      // 回跳前后那几秒用户正盯着看, 拖两拍就像卡住了; 单纯停在登录页则不必这么勤
+      return session.waiting ? 1000 : 3000;
+    },
+    // 桌面壳收到回调会把窗口调到前台, 焦点回来时顺手再确认一次
+    refetchOnWindowFocus: true,
     staleTime: 0,
     retry: false,
   });
