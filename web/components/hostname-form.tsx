@@ -24,11 +24,23 @@ const COMMON_LINES = ["默认", "境内", "境外"];
 
 // 回源类型, 与后端 model/origin.go 的常量对齐。内联落点用得上。
 const ORIGIN_KINDS = [
-  { value: "cname", label: "第三方 CDN CNAME" },
-  { value: "ip", label: "直连源站 IP" },
+  // 优选域名归到 cname: 它是别人家已接入 CF 的域名, 不是本 SaaS 区的记录,
+  // 挂成 saas_fallback 会被"设置回退源"那一步当成本区回退源候选
+  { value: "cname", label: "第三方 CDN / 优选域名 CNAME" },
+  { value: "ip", label: "直连源站 IP (含优选 IP)" },
   { value: "saas_fallback", label: "CF SaaS 落点 (解析指向它, 把流量带进 CF)" },
   { value: "saas_custom", label: "CF SaaS 自定义源 (CF 收到后转给它, 不是解析目标)" },
 ];
+
+// 接入方式。delegated: 主域名在 CF, 子域名委派到 DNSPod (原有玩法);
+// direct: 根域名本来就托管在 DNSPod, 没有 CF 父区, 支持给根域名直接配优选。
+type AccessMode = "delegated" | "direct";
+
+// zoneGoverns 判定某个 zone 是否管辖该主机名 (区顶点本身也算), 判据与后端 inZone 一致。
+function zoneGoverns(zone: string, hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/\.$/, "");
+  return host !== "" && (host === zone || host.endsWith(`.${zone}`));
+}
 
 type DraftRoute = Pick<Route, "line" | "originId" | "kind" | "value" | "address" | "sni">;
 
@@ -69,7 +81,11 @@ export function HostnameForm({
   onSaved?: (saved: Hostname) => void;
 }) {
   const qc = useQueryClient();
-  // 后缀在 CF 里找不到时退回手打整串。已有域名进来先按"能不能匹配上"定一次, 之后由用户自己切
+  // 已有域名的模式是存量事实: 没有父区就是直托。空 parentZone 只会来自直托保存, 委派模式后端必定填上
+  const [mode, setMode] = useState<AccessMode>(
+    initial && !initial.parentZone ? "direct" : "delegated",
+  );
+  // 后缀在列表里找不到时退回手打整串。已有域名进来先按"能不能匹配上"定一次, 之后由用户自己切
   const [manualHost, setManualHost] = useState(false);
   const [draft, setDraft] = useState<Draft>(() =>
     initial
@@ -114,6 +130,15 @@ export function HostnameForm({
   const zoneNames = zoneList.map((z) => z.zone);
   const accountOf = (zone: string) => zoneList.find((z) => z.zone === zone);
 
+  // 直托模式的域名后缀来自 DNSPod 而不是 CF; 这个接口必须限定凭据, 没选凭据前不问
+  const { data: dnspodDomains } = useQuery({
+    queryKey: queryKeys.dnspodDomains(dnspodCredentialId),
+    queryFn: () =>
+      api.get<string[] | null>(`/api/discover/dnspod-domains?credentialId=${dnspodCredentialId}`),
+    enabled: mode === "direct" && dnspodCredentialId > 0,
+    staleTime: 5 * 60_000,
+  });
+
   // 每敲一个字都去问一次后端太浪费 (一份凭据一次 CF 往返), 停手再问
   const [probeHost, setProbeHost] = useState(draft.hostname);
   useEffect(() => {
@@ -121,21 +146,23 @@ export function HostnameForm({
     return () => clearTimeout(timer);
   }, [draft.hostname]);
 
-  // 父区由后端从可见 zone 里推导 (顺带带出该用哪份凭据), 前端只拿来展示 —— 推导逻辑只保留一份
+  // 父区由后端从可见 zone 里推导 (顺带带出该用哪份凭据), 前端只拿来展示 —— 推导逻辑只保留一份。
+  // 直托模式没有父区, 这个探测整个不跑
   const { data: derivedParent } = useQuery({
     queryKey: ["discover", "parent-zone", probeHost],
     queryFn: () =>
       api.get<{ parentZone: string; credentialId: number; credentialName: string }>(
         `/api/discover/parent-zone?hostname=${encodeURIComponent(probeHost)}`,
       ),
-    enabled: probeHost.includes("."),
+    enabled: mode === "delegated" && probeHost.includes("."),
     retry: false,
     staleTime: 60_000,
   });
-  const parentZone = derivedParent?.parentZone ?? "";
+  const parentZone = mode === "direct" ? "" : (derivedParent?.parentZone ?? "");
   // 父区归哪个账号是当前这个域名的客观事实, 优先用它; 推导不出来 (还没返回 / Token 看不到) 才退回存量值,
-  // 反过来的话把域名改到另一个账号下的区, 凭据还留在旧账号上
-  const cfCredentialId = derivedParent?.credentialId || draft.cfCredentialId || 0;
+  // 反过来的话把域名改到另一个账号下的区, 凭据还留在旧账号上。直托模式没有父区凭据这回事
+  const cfCredentialId =
+    mode === "direct" ? 0 : derivedParent?.credentialId || draft.cfCredentialId || 0;
 
   // SaaS 区在别的账号下时要单独记一份凭据; 与父区同一个账号就留 0, 让后端回落到父区凭据。
   // zone 列表还没到时保持存量值不动 —— 这时"查不到账号"只说明还没读到, 不是真的同账号
@@ -150,6 +177,10 @@ export function HostnameForm({
     mutationFn: () =>
       api.post<Hostname>("/api/hostnames", {
         ...draft,
+        // 空 parentZone 两种模式含义不同 (委派 = 待推导, 直托 = 就该为空),
+        // directDnspod 是给后端的显式模式声明, 不落库
+        parentZone: mode === "direct" ? "" : draft.parentZone,
+        directDnspod: mode === "direct",
         cfCredentialId,
         saasCredentialId,
         dnspodCredentialId,
@@ -181,20 +212,55 @@ export function HostnameForm({
     >
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
+          label="接入方式"
+          hint={
+            mode === "direct"
+              ? "根域名的权威 DNS 就在 DNSPod, 没有 CF 父区, 不需要委派"
+              : "主域名在 CF, 把子域名委派到 DNSPod 做分线路"
+          }
+        >
+          <Select
+            value={mode}
+            onValueChange={(v) => {
+              setMode((v as AccessMode) ?? "delegated");
+              setManualHost(false);
+            }}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue>
+                {(v) => (String(v) === "direct" ? "DNSPod 直托根域名" : "从 CF 父区委派子域名")}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="delegated">从 CF 父区委派子域名</SelectItem>
+              <SelectItem value="direct">DNSPod 直托根域名</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="DNSPod 凭据">
+          <CredSelect
+            value={dnspodCredentialId}
+            options={dpCreds}
+            onChange={(v) => set("dnspodCredentialId", v)}
+          />
+        </Field>
+        <Field
           label="访问域名"
           hint={
-            parentZone
-              ? `父区 ${parentZone}${derivedParent?.credentialName ? ` · 账号 ${derivedParent.credentialName}` : ""} (自动匹配)`
-              : "对外提供服务的主机名; 选好后缀只用打前面那一截, 父区和 CF 账号都自动定"
+            mode === "direct"
+              ? "选 DNSPod 里的域名当后缀, 前缀留空就是根域名本身; 先选凭据才有得选"
+              : parentZone
+                ? `父区 ${parentZone}${derivedParent?.credentialName ? ` · 账号 ${derivedParent.credentialName}` : ""} (自动匹配)`
+                : "对外提供服务的主机名; 选好后缀只用打前面那一截, 父区和 CF 账号都自动定"
           }
         >
           <HostPicker
             value={draft.hostname}
             onChange={(v) => set("hostname", v)}
-            zones={zoneNames}
+            zones={mode === "direct" ? (dnspodDomains ?? []) : zoneNames}
             manual={manualHost}
             onManualChange={setManualHost}
-            prefixPlaceholder="img"
+            prefixPlaceholder={mode === "direct" ? "留空 = 根域名" : "img"}
             required
           />
         </Field>
@@ -217,9 +283,9 @@ export function HostnameForm({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">不使用 CF for SaaS</SelectItem>
-              {/* 父区排除掉: 自定义主机名不能是 SaaS 区自己的子域 */}
+              {/* 管辖访问域名的区排除掉: 自定义主机名不能是 SaaS 区自己的子域 */}
               {zoneNames
-                .filter((z) => z !== parentZone)
+                .filter((z) => !zoneGoverns(z, draft.hostname))
                 .map((z) => (
                   <SelectItem key={z} value={z}>
                     {z}
@@ -227,13 +293,6 @@ export function HostnameForm({
                 ))}
             </SelectContent>
           </Select>
-        </Field>
-        <Field label="DNSPod 凭据">
-          <CredSelect
-            value={dnspodCredentialId}
-            options={dpCreds}
-            onChange={(v) => set("dnspodCredentialId", v)}
-          />
         </Field>
         <Field label="备注">
           <Input value={draft.note} onChange={(e) => set("note", e.target.value)} />
@@ -351,7 +410,11 @@ export function HostnameForm({
                     value={route.value}
                     onChange={(e) => setRoute(i, { value: e.target.value })}
                     placeholder={
-                      route.kind === "ip" ? "203.0.113.10" : "img.example.com.eo.dnse2.com"
+                      route.kind === "ip"
+                        ? "203.0.113.10"
+                        : route.kind === "saas_fallback"
+                          ? "SaaS 区里的橙云记录名"
+                          : "CDN 给的 CNAME 或优选域名"
                     }
                     className="mt-1"
                   />

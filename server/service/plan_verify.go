@@ -127,7 +127,7 @@ func refreshInstruction(step *model.Step, h model.Hostname, snap model.Snapshot)
 
 	case "dnspod.routes":
 		var b strings.Builder
-		fmt.Fprintf(&b, "到 DNSPod 的 %s 里, 给主机记录 @ 按线路加记录:\n", zone)
+		fmt.Fprintf(&b, "到 DNSPod 的 %s 里, 给主机记录 %s 按线路加记录:\n", zone, routeRecordName(h))
 		for _, route := range h.Routes {
 			want, err := expectedValue(route, snap)
 			if err != nil {
@@ -242,7 +242,7 @@ func isIPv4(s string) bool {
 // Key 未登记时返回不可判定, 由调用方保持原状并提示人工确认, 不静默当成通过。
 func stepSatisfied(key string, h model.Hostname, snap model.Snapshot) (ok bool, known bool, reason string) {
 	if strings.HasPrefix(key, teardownPrefix) {
-		return teardownSatisfied(key, snap)
+		return teardownSatisfied(key, h, snap)
 	}
 	switch key {
 	case "saas.fallback_origin":

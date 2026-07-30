@@ -58,6 +58,9 @@ type Snapshot struct {
 	DNSPodEnabled bool `json:"dnspodEnabled"`
 	// DNSPodStatus DNSPod 返回的原始域名状态, 判定存疑时用它对照
 	DNSPodStatus string `json:"dnspodStatus"`
+	// DNSPodDNSStatus DNSPod 对"域名 NS 是否指向自己"的检测结论, DNS_ERROR 表示未指向。
+	// 检测是周期性的, 空值只代表"没报错", 不能当"已确认正常"
+	DNSPodDNSStatus string `json:"dnspodDnsStatus"`
 	// DNSPodMissing 这个腾讯云账号下查不到该域名 —— 还没添加, 或者已经拆掉。
 	// 与"读取失败"区分开: 拆除流程靠它确认域名真的删干净了
 	DNSPodMissing bool `json:"dnspodMissing"`

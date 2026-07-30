@@ -13,9 +13,13 @@ const teardownPrefix = "teardown."
 
 // buildTeardownSteps 生成拆除流程: 把配置流程在各平台留下的痕迹一处处撤掉。
 //
-// 顺序大体是配置流程的逆序, 但第一步固定撤委派 —— 反过来先删 DNSPod 域名的话,
-// 父区的委派还指着一组不再托管这个域名的 NS, 解析器拿到的是 SERVFAIL,
-// 比干脆查不到更难排查, 而且会一直重试。
+// 顺序大体是配置流程的逆序, 但第一步固定是"停止解析"的那一刀: 委派模式是撤委派 ——
+// 反过来先删 DNSPod 域名的话, 父区的委派还指着一组不再托管这个域名的 NS,
+// 解析器拿到的是 SERVFAIL, 比干脆查不到更难排查, 而且会一直重试;
+// 直托模式没有委派, 删线路记录本身就是那一刀。
+//
+// 直托模式绝不生成"删 DNSPod 域名"这一步: 那是用户根域名的整个 DNS,
+// 上面还挂着与本工具无关的解析, 删掉等于把人家全站解析端掉 —— 连"跳过"的机会都不该给。
 //
 // 每一步都可以跳过: 拆到一半改主意 (比如想留着 DNSPod 域名自己用) 是常见的,
 // 流程不该逼着人把每一步都做完。
@@ -33,34 +37,45 @@ func buildTeardownSteps(h model.Hostname) []model.Step {
 
 	useSaaS := h.SaaSZone != ""
 
-	add(model.Step{
-		Key:   "teardown.cf_delegation",
-		Title: "撤掉父区里的 NS 委派",
-		Instruction: fmt.Sprintf(
-			"到 CF 的 %s 区, 删掉名称为 %s 的 NS 记录。\n"+
-				"这一步一做完 %s 就不再解析了, 后面几步只是把各平台上的残留清干净。\n"+
-				"先撤委派再动 DNSPod: 反过来的话委派还指着已经不托管这个域名的 NS, "+
-				"解析器拿到的是 SERVFAIL 并且会一直重试, 比干脆查不到更糟。",
-			h.ParentZone, relativeName(h.Hostname, h.ParentZone), h.Hostname),
-		ETASeconds: 600,
-	})
+	if h.Delegated() {
+		add(model.Step{
+			Key:   "teardown.cf_delegation",
+			Title: "撤掉父区里的 NS 委派",
+			Instruction: fmt.Sprintf(
+				"到 CF 的 %s 区, 删掉名称为 %s 的 NS 记录。\n"+
+					"这一步一做完 %s 就不再解析了, 后面几步只是把各平台上的残留清干净。\n"+
+					"先撤委派再动 DNSPod: 反过来的话委派还指着已经不托管这个域名的 NS, "+
+					"解析器拿到的是 SERVFAIL 并且会一直重试, 比干脆查不到更糟。",
+				h.ParentZone, relativeName(h.Hostname, h.ParentZone), h.Hostname),
+			ETASeconds: 600,
+		})
+	}
 
+	recordsInstruction := "等这一步刷新出具体清单后再操作。只删线路落点记录和证书验证 TXT, 其它记录一条不动 —— 那些可能是当初从父区搬过来的, 还在服务。"
+	if !h.Delegated() {
+		recordsInstruction = fmt.Sprintf(
+			"等这一步刷新出具体清单后再操作。这一步一做完 %s 就不再按分线路解析了 —— 直托模式没有委派, 删线路记录本身就是停止解析的那一刀。\n"+
+				"只删本工具维护的线路落点记录和证书验证 TXT, 域名下其它解析一条不动。",
+			h.Hostname)
+	}
 	add(model.Step{
 		Key:         "teardown.dnspod_records",
 		Title:       "删掉 DNSPod 上由本工具维护的解析记录",
-		Instruction: "等这一步刷新出具体清单后再操作。只删区顶点的线路记录和证书验证 TXT, 其它记录一条不动 —— 那些可能是当初从父区搬过来的, 还在服务。",
+		Instruction: recordsInstruction,
 		ETASeconds:  60,
 	})
 
-	add(model.Step{
-		Key:   "teardown.dnspod_zone",
-		Title: "从 DNSPod 删掉这个域名",
-		Instruction: fmt.Sprintf(
-			"到 DNSPod 把域名 %s 整个删掉。域名下如果还有别的记录会跟着一起没, 执行前的清单里会逐条列出来。\n"+
-				"想留着这个域名自己接着用的话, 跳过这一步。",
-			h.DNSPodZone()),
-		ETASeconds: 30,
-	})
+	if h.Delegated() {
+		add(model.Step{
+			Key:   "teardown.dnspod_zone",
+			Title: "从 DNSPod 删掉这个域名",
+			Instruction: fmt.Sprintf(
+				"到 DNSPod 把域名 %s 整个删掉。域名下如果还有别的记录会跟着一起没, 执行前的清单里会逐条列出来。\n"+
+					"想留着这个域名自己接着用的话, 跳过这一步。",
+				h.DNSPodZone()),
+			ETASeconds: 30,
+		})
+	}
 
 	if useSaaS {
 		add(model.Step{
@@ -84,15 +99,17 @@ func buildTeardownSteps(h model.Hostname) []model.Step {
 		})
 	}
 
-	add(model.Step{
-		Key:   "teardown.cf_leftovers",
-		Title: "清掉父区里本工具写下的验证记录",
-		Instruction: fmt.Sprintf(
-			"配置时如果做过 DNSPod 的域名归属验证, %s 里会留着一条 TXT。它现在没有任何作用, 但会一直躺在记录列表里误导排查。\n"+
-				"当初 DNSPod 要求把 TXT 加在别的主域名上的话, 那一条得自己去对应的区删 —— 这里只清父区。",
-			h.ParentZone),
-		ETASeconds: 30,
-	})
+	if h.Delegated() {
+		add(model.Step{
+			Key:   "teardown.cf_leftovers",
+			Title: "清掉父区里本工具写下的验证记录",
+			Instruction: fmt.Sprintf(
+				"配置时如果做过 DNSPod 的域名归属验证, %s 里会留着一条 TXT。它现在没有任何作用, 但会一直躺在记录列表里误导排查。\n"+
+					"当初 DNSPod 要求把 TXT 加在别的主域名上的话, 那一条得自己去对应的区删 —— 这里只清父区。",
+				h.ParentZone),
+			ETASeconds: 30,
+		})
+	}
 
 	return steps
 }
@@ -112,11 +129,14 @@ func refreshTeardownInstruction(step *model.Step, h model.Hostname, snap model.S
 			strings.Join(snap.Delegation, "\n  "), h.Hostname)
 
 	case "teardown.dnspod_records":
-		mine, others := splitManagedRecords(snap.Records)
+		mine, others := splitManagedRecords(h, snap.Records)
 		if len(mine) == 0 && len(others) == 0 {
 			return
 		}
 		var b strings.Builder
+		if !h.Delegated() {
+			fmt.Fprintf(&b, "直托模式没有委派, 删掉这些线路记录 %s 就不再解析了 —— 这就是停止解析的那一刀。\n", h.Hostname)
+		}
 		fmt.Fprintf(&b, "DNSPod 的 %s 里, 这些记录是本工具建的, 会被删掉:\n", h.DNSPodZone())
 		if len(mine) == 0 {
 			b.WriteString("  (已经没有了)\n")
@@ -175,7 +195,7 @@ var teardownDeps = map[string]string{
 
 // teardownSatisfied 判定某个拆除步骤要清的东西是不是真的没了。
 // 判据一律是"巡检拉到的实际状态", 不是"接口调过了" —— 与配置流程的验证口径一致。
-func teardownSatisfied(key string, snap model.Snapshot) (ok bool, known bool, reason string) {
+func teardownSatisfied(key string, h model.Hostname, snap model.Snapshot) (ok bool, known bool, reason string) {
 	if source, dep := teardownDeps[key]; dep {
 		if why, failed := snap.FetchErrors[source]; failed {
 			return false, true, "这轮没能读到实际状态, 无法确认是否清干净: " + why
@@ -191,7 +211,7 @@ func teardownSatisfied(key string, snap model.Snapshot) (ok bool, known bool, re
 			len(snap.Delegation), strings.Join(snap.Delegation, ", "))
 
 	case "teardown.dnspod_records":
-		mine, _ := splitManagedRecords(snap.Records)
+		mine, _ := splitManagedRecords(h, snap.Records)
 		if len(mine) == 0 {
 			return true, true, ""
 		}
@@ -226,9 +246,9 @@ func teardownSatisfied(key string, snap model.Snapshot) (ok bool, known bool, re
 
 // splitManagedRecords 把 DNSPod 上的记录分成"本工具维护的"和"别人的"。
 // 拆除只碰前者: 后者可能是用户自己加的, 也可能是清理父区时搬过来的, 还在服务。
-func splitManagedRecords(records []model.DNSRecord) (mine, others []model.DNSRecord) {
+func splitManagedRecords(h model.Hostname, records []model.DNSRecord) (mine, others []model.DNSRecord) {
 	for _, r := range records {
-		if isManagedRecord(r.Name, r.Type) {
+		if isManagedRecord(h, r.Name, r.Line, r.Type) {
 			mine = append(mine, r)
 			continue
 		}
@@ -238,11 +258,27 @@ func splitManagedRecords(records []model.DNSRecord) (mine, others []model.DNSRec
 }
 
 // isManagedRecord 判定 DNSPod 上这条记录是不是配置流程自己建的。
-// 两类: 区顶点上的线路落点, 以及证书 / 归属验证用的 TXT。
-// 按位置和类型判定而不是记住建过什么 —— 用户中途手改过也能认出来。
-func isManagedRecord(name, recordType string) bool {
-	if name == "@" {
-		return recordType == "A" || recordType == "AAAA" || recordType == "CNAME"
+// 两类: 访问域名对应主机记录上、且线路在配置里声明过的落点记录, 以及本工具会写的那两条验证 TXT。
+//
+// 落点必须校验线路: 直托模式下这个区是用户根域名的整个 DNS, 光凭"位置 + 类型"认领,
+// 会把用户接入本工具之前就有的同名记录一并划成"我的"送进待删清单。
+// TXT 只认确切名字不做前缀匹配 —— 用户给自己别的证书留的 _acme-challenge.xxx 不能被连坐。
+func isManagedRecord(h model.Hostname, name, line, recordType string) bool {
+	switch recordType {
+	case "A", "AAAA", "CNAME":
+		if !sameName(name, routeRecordName(h)) {
+			return false
+		}
+		for _, r := range h.Routes {
+			if r.Line == line {
+				return true
+			}
+		}
+		return false
+	case "TXT":
+		zone := h.DNSPodZone()
+		return sameName(name, relativeName("_acme-challenge."+h.Hostname, zone)) ||
+			sameName(name, relativeName("_cf-custom-hostname."+h.Hostname, zone))
 	}
-	return recordType == "TXT" && isManagedTXT(name)
+	return false
 }

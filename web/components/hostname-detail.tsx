@@ -64,7 +64,7 @@ export function HostnameDetail() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">{data.hostname}</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          父区 {data.parentZone}
+          {data.parentZone ? `父区 ${data.parentZone}` : "DNSPod 直托"}
           {data.saasZone ? ` · SaaS 区 ${data.saasZone}` : ""} · DNSPod{" "}
           {data.dnspodDomain || data.hostname}
         </p>

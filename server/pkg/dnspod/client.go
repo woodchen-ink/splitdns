@@ -39,6 +39,9 @@ type Domain struct {
 	Status string
 	// Enabled 解析是否在对外生效
 	Enabled bool
+	// DNSStatus DNSPod 对"域名 NS 是否指向自己"的周期性检测结论:
+	// DNS_ERROR 表示未指向, 空表示正常或还没检测。只能拿它的报错当信号, 不能拿空值当"正常"
+	DNSStatus string
 }
 
 // 只有这两个状态是真的不解析。用黑名单而不是"只认 ENABLE"的白名单:
@@ -101,6 +104,7 @@ func (c *Client) DescribeDomain(ctx context.Context, domain string) (*Domain, er
 	}
 	d.Status = deref(info.Status)
 	d.Enabled = !pausedStatuses[strings.ToUpper(d.Status)]
+	d.DNSStatus = deref(info.DnsStatus)
 	return d, nil
 }
 

@@ -1,7 +1,8 @@
 # splitdns
 
-把一个子域名从 Cloudflare 委派到 DNSPod 做分线路解析、并配合 Cloudflare for SaaS 让其中一条线路继续走 CF CDN
-—— 这套流程的配置、执行与巡检工具。只有桌面版一种形态。
+在 DNSPod 上做分线路解析、并配合 Cloudflare for SaaS 让其中一条线路继续走 CF CDN (含优选)
+—— 这套流程的配置、执行与巡检工具。接入方式有两种: 把子域名从 Cloudflare 委派到 DNSPod (委派模式),
+或根域名本来就托管在 DNSPod (直托模式)。只有桌面版一种形态。
 
 ## 端目录
 
@@ -32,7 +33,12 @@
   双栈用逗号 / 空白分隔填多个 (IPv4 建 A、IPv6 建 AAAA), 解析用 `originAddresses()`。
   `saas_custom` 的 `sni` 恒等于落点值 (`fillCustomOriginSNI`, 回源库与内联落点两条写入路径都过一遍):
   CF 默认拿源服务器名握手, 留空虽然也能回源, 却会让"源站要给这个名字挂 router"从流程里消失
-- `hostname` — 访问域名, 记录它在 CF 父区 / CF SaaS 区 / DNSPod 三处的落点
+- `hostname` — 访问域名, 记录它在 CF 父区 / CF SaaS 区 / DNSPod 三处的落点。
+  **`parent_zone` 为空即直托模式**, 判定统一走 `Hostname.Delegated()`; 直托时 `cf_credential_id` 恒为 0,
+  SaaS 区凭据保存时必定填进 `saas_credential_id` (没有父区凭据可回落), `dnspod_domain` 按凭据可见的
+  域名列表推导 (最长后缀, `deriveDNSPodDomain`)。
+  空 `parentZone` 在保存请求里有歧义 (委派 = 待推导, 直托 = 就该为空), 所以模式由请求专属字段
+  `directDnspod` 显式声明, 不落库
 - `route` — `访问域名 × 线路 → 落点` 的绑定。落点二选一: 引用 `origin`, 或直接内联填值 (`origin_id` 为 0),
   判定统一走 `Route.Target()`
 - `plan` / `step` — 流程实例与步骤。持久化是因为流程中多步要等 DNS 生效, 天然跨会话。
@@ -66,6 +72,16 @@
   **只有 `invalid_grant` 才清本地登录态**: 网络不通 / 5xx 只是这次没刷上, 当成"要重新登录"会让人断个网就被自己的
   工具锁在门外; 那类失败进冷却期 (`refreshRetryGap`), 否则前端轮询会把它变成对授权服务器的连打。
   服务端不轮换时不回 `refresh_token`, **拿空值覆盖等于自己清了登录态**, 要保留旧值
+- **接入模式** (`Hostname.Delegated()`): 两种模式共用同一套步骤 / 巡检 / 拆除机制, 差别只在
+  "父区相关的东西存不存在" —— 直托模式不生成 `cf.*` 步骤、不巡检父区、不报委派问题,
+  DCV TXT 与线路记录照旧写进 DNSPod。线路记录的主机记录名统一走 `routeRecordName`
+  (访问域名相对 DNSPod 域名): 委派模式与直托根域名都是 `@`, 直托子域名是相对名, 不要再硬编码 `@`。
+  直托模式的 NS 指向只在 DNSPod 自己报 `DNS_ERROR` 时提醒 (warn 级 `dnspod.ns_unpointed`) ——
+  它的检测有滞后, 空值不能当"已确认正常"
+- **优选就是一条指向优选域名的线路**: 类型用 `cname` (优选 IP 用 `ip`), 不要建成 `saas_fallback` ——
+  「设置回退源」那一步会拿 `saas_fallback` 落点去设整个区的回退源, 优选域名不在本区, 设上去会把回源打断
+  (`applyFallbackOrigin` 已加"默认线优先"的防御, 但建模就别踩)。流量经优选域名进 CF 边缘后按 Host 头
+  找自定义主机名, 所以优选线照样依赖 SaaS 区那套配置
 - **巡检** (`service/inspect.go` + `check*.go`): 一次拉齐三个平台的实际状态, 再按规则判定。
   任何一处拉取失败都转成 Finding, 不让整个报告消失; 同时记进 `Snapshot.FetchErrors`,
   **判定层必须区分"确实没有"和"根本没读到"** —— 两者在快照里长得一模一样, 混淆会让拆除流程谎报清干净了
@@ -90,6 +106,11 @@
 - **拆除流程** (`service/plan_teardown*.go`, `step.key` 前缀 `teardown.`): 按 撤委派 → 清 DNSPod 记录 →
   删 DNSPod 域名 → 删自定义主机名 → 清回退源 → 清父区验证记录 的顺序逐步撤。
   **第一步必须是撤委派**: 反过来先删 DNSPod 域名, 委派还指着不再托管它的 NS, 解析器拿到 SERVFAIL 且会一直重试。
+  直托模式没有撤委派 / 删域名 / 清父区三步, 清线路记录就是停止解析的那一刀;
+  **"删 DNSPod 域名"在直托模式连生成都不生成** —— 那是用户根域名的整个 DNS, 跳过都嫌给了机会。
+  **认领判据** (`isManagedRecord`): 本工具维护的 = 声明过线路的落点记录 + 两条确切名字的验证 TXT
+  (`_acme-challenge.*` / `_cf-custom-hostname.*` 相对名精确匹配), 不按"位置 + 类型"泛认 ——
+  直托模式的区里全是用户自己的解析, 泛认会把别人的记录送进待删清单。
   删自定义主机名时一并清掉本工具为它建的落点记录, 但区里还有别的自定义主机名指着同一个源服务器、
   或它本身就是回退源时不动 —— 少删一条只是残留, 多删一条是别人的线上流量。
   删本地记录不在流程里 (删完流程自己也没了), 走 `DELETE /api/hostnames/{id}`

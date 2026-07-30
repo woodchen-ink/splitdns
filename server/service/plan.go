@@ -164,17 +164,33 @@ func buildSteps(h model.Hostname) []model.Step {
 		})
 	}
 
-	add(model.Step{
-		Key:   "dnspod.zone",
-		Title: "在 DNSPod 添加域名",
-		Mode:  model.StepManual,
-		Instruction: fmt.Sprintf(
-			"到 DNSPod「添加域名」处直接填 %s (子域名可以当独立域名添加, 免费版即可)。\n"+
-				"添加后进域名详情, 记下它分配给你的那组 NS —— 后面委派要用, 以控制台显示的为准。",
-			h.DNSPodZone()),
-		ETASeconds: 30,
-		Verifiable: true,
-	})
+	if h.Delegated() {
+		add(model.Step{
+			Key:   "dnspod.zone",
+			Title: "在 DNSPod 添加域名",
+			Mode:  model.StepManual,
+			Instruction: fmt.Sprintf(
+				"到 DNSPod「添加域名」处直接填 %s (子域名可以当独立域名添加, 免费版即可)。\n"+
+					"添加后进域名详情, 记下它分配给你的那组 NS —— 后面委派要用, 以控制台显示的为准。",
+				h.DNSPodZone()),
+			ETASeconds: 30,
+			Verifiable: true,
+		})
+	} else {
+		// 直托模式的前提就是域名已经在 DNSPod 上, 这一步通常一进来就自动通过;
+		// 留着它是为了兜住"域名被暂停 / 被移出账号"这类前提被破坏的情况
+		add(model.Step{
+			Key:   "dnspod.zone",
+			Title: "确认域名在 DNSPod 上且解析已启用",
+			Mode:  model.StepManual,
+			Instruction: fmt.Sprintf(
+				"确认 %s 已经加进这个腾讯云账号的 DNSPod 并处于启用状态。\n"+
+					"这个域名的解析本来就在 DNSPod 上, 不需要任何委派操作。",
+				h.DNSPodZone()),
+			ETASeconds: 30,
+			Verifiable: true,
+		})
+	}
 
 	if useSaaS {
 		add(model.Step{
@@ -196,30 +212,32 @@ func buildSteps(h model.Hostname) []model.Step {
 		Verifiable:  true,
 	})
 
-	add(model.Step{
-		Key:   "cf.cleanup",
-		Title: "清空父区里该子域名的旧记录",
-		Mode:  model.StepManual,
-		Instruction: fmt.Sprintf(
-			"到 CF 的 %s 区, 删掉 %s 以及它下面所有已有记录。\n"+
-				"留着不会报错, 但委派之后它们会变成 shadowed records —— 列表里看得见, 实际一条都不生效。",
-			h.ParentZone, h.Hostname),
-		ETASeconds: 30,
-		Verifiable: true,
-	})
+	if h.Delegated() {
+		add(model.Step{
+			Key:   "cf.cleanup",
+			Title: "清空父区里该子域名的旧记录",
+			Mode:  model.StepManual,
+			Instruction: fmt.Sprintf(
+				"到 CF 的 %s 区, 删掉 %s 以及它下面所有已有记录。\n"+
+					"留着不会报错, 但委派之后它们会变成 shadowed records —— 列表里看得见, 实际一条都不生效。",
+				h.ParentZone, h.Hostname),
+			ETASeconds: 30,
+			Verifiable: true,
+		})
 
-	add(model.Step{
-		Key:   "cf.delegation",
-		Title: "在父区加 NS 委派",
-		Mode:  model.StepManual,
-		Instruction: fmt.Sprintf(
-			"在 CF 的 %s 区加 NS 记录, 名称填 %s, 内容填 DNSPod 分配的那组 NS (通常两条)。\n"+
-				"代理状态显示「仅 DNS」是正常的, NS 类型没有橙云开关。\n"+
-				"这一步只影响这一个名字, 父区其它记录和注册商那边都不用动。",
-			h.ParentZone, relativeName(h.Hostname, h.ParentZone)),
-		ETASeconds: 600,
-		Verifiable: true,
-	})
+		add(model.Step{
+			Key:   "cf.delegation",
+			Title: "在父区加 NS 委派",
+			Mode:  model.StepManual,
+			Instruction: fmt.Sprintf(
+				"在 CF 的 %s 区加 NS 记录, 名称填 %s, 内容填 DNSPod 分配的那组 NS (通常两条)。\n"+
+					"代理状态显示「仅 DNS」是正常的, NS 类型没有橙云开关。\n"+
+					"这一步只影响这一个名字, 父区其它记录和注册商那边都不用动。",
+				h.ParentZone, relativeName(h.Hostname, h.ParentZone)),
+			ETASeconds: 600,
+			Verifiable: true,
+		})
+	}
 
 	if useSaaS {
 		add(model.Step{

@@ -13,16 +13,37 @@ import (
 const defaultLine = "默认"
 
 // evaluate 汇总所有规则判定。规则按主题分组, 每组一个函数, 新增检查项只加函数不改这里的结构。
+// 委派 / 父区相关的检查只在委派模式下跑 —— 直托模式没有父区, 缺委派记录不是故障是常态。
 func evaluate(h model.Hostname, snap model.Snapshot) []model.Finding {
 	var out []model.Finding
-	out = append(out, checkDelegation(snap)...)
-	out = append(out, checkShadowed(snap)...)
+	if h.Delegated() {
+		out = append(out, checkDelegation(snap)...)
+		out = append(out, checkShadowed(snap)...)
+	}
+	out = append(out, checkNSPointed(h, snap)...)
 	out = append(out, checkSaaS(h, snap)...)
 	out = append(out, checkTXT(h, snap)...)
 	out = append(out, checkRoutes(h, snap)...)
 	out = append(out, checkZoneEnabled(snap)...)
 	out = append(out, checkZoneExists(snap)...)
 	return out
+}
+
+// checkNSPointed 直托模式下检查域名的 NS 是否指向 DNSPod —— 它是委派模式里 checkDelegation 的对应物。
+// 判据是 DNSPod 自己的周期性检测: 只有它明确报 DNS_ERROR 才提醒, 空值不当"已确认正常";
+// 检测可能滞后 (刚改完 NS 要等它重测), 所以级别用 warn, 不把步骤卡死在别人的缓存上。
+func checkNSPointed(h model.Hostname, snap model.Snapshot) []model.Finding {
+	if h.Delegated() || !strings.EqualFold(snap.DNSPodDNSStatus, "DNS_ERROR") {
+		return nil
+	}
+	return []model.Finding{{
+		Level:  model.LevelWarn,
+		Code:   "dnspod.ns_unpointed",
+		Title:  "DNSPod 检测到域名的 NS 没有指向它",
+		Detail: fmt.Sprintf("%s 的 DNS 检测状态是 DNS_ERROR, NS 不对时记录配得再对也不生效", h.DNSPodZone()),
+		Fix: "到域名注册商处把 NS 改成 DNSPod 分配的那组 (" + strings.Join(snap.DNSPodNameservers, ", ") +
+			")。刚改过的话等 DNSPod 重新检测即可",
+	}}
 }
 
 // checkZoneExists 报告域名压根不在 DNSPod 上。
@@ -100,7 +121,8 @@ func checkShadowed(snap model.Snapshot) []model.Finding {
 // checkRoutes 校验每条配置的线路在 DNSPod 上是否真的落地且值正确, 并检查兜底线路与配置漂移。
 func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 	var out []model.Finding
-	apex := apexRecords(snap.Records)
+	recordName := routeRecordName(h)
+	apex := routeRecords(snap.Records, recordName)
 
 	hasDefault := false
 	declared := map[string]bool{}
@@ -130,7 +152,7 @@ func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 				Code:   "route.missing",
 				Title:  fmt.Sprintf("线路「%s」在 DNSPod 上没有记录", route.Line),
 				Detail: fmt.Sprintf("期望指向 %s", want),
-				Fix:    fmt.Sprintf("在 DNSPod 的 %s 里给 @ 加一条「%s」线路记录", h.DNSPodZone(), route.Line),
+				Fix:    fmt.Sprintf("在 DNSPod 的 %s 里给主机记录 %s 加一条「%s」线路记录", h.DNSPodZone(), recordName, route.Line),
 			})
 			continue
 		}
@@ -203,11 +225,18 @@ func expectedValue(route model.Route, snap model.Snapshot) (string, error) {
 	return target.Value, nil
 }
 
-// apexRecords 收集区顶点 (@) 上按线路索引的记录, 这是分线路解析的落点。
-func apexRecords(records []model.DNSRecord) map[string]model.DNSRecord {
+// routeRecordName 返回该域名的线路记录在 DNSPod 里的主机记录名。
+// 委派模式下访问域名就是 DNSPod 区顶点, 得到 "@"; 直托模式下访问域名是根域名 (也是 "@")
+// 或它的子域 (得到相对名, 如 "www")。线路记录的读写与判定都用这一个结果。
+func routeRecordName(h model.Hostname) string {
+	return relativeName(h.Hostname, h.DNSPodZone())
+}
+
+// routeRecords 收集指定主机记录名上按线路索引的落点记录 (A / AAAA / CNAME)。
+func routeRecords(records []model.DNSRecord, name string) map[string]model.DNSRecord {
 	out := make(map[string]model.DNSRecord)
 	for _, r := range records {
-		if r.Name != "@" {
+		if !sameName(r.Name, name) {
 			continue
 		}
 		if r.Type != "CNAME" && r.Type != "A" && r.Type != "AAAA" {

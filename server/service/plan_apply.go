@@ -76,8 +76,13 @@ func ApplyStep(ctx context.Context, planID, stepID uint, confirm bool, action st
 }
 
 // applyFallbackOrigin 确保 SaaS 区里有那条橙云记录, 并把它设为回退源。
+// 多条线路都是 saas_fallback 类型时优先认「默认」线那条 —— 优选场景下别的线可能挂着
+// 优选域名, 它不在本区, 拿它当回退源会把整个区的回源打断。
 func applyFallbackOrigin(ctx context.Context, h model.Hostname, snap model.Snapshot) (string, error) {
-	origin := findOrigin(h, model.OriginSaaSFallback)
+	origin := findLineOrigin(h, defaultLine, model.OriginSaaSFallback)
+	if origin == nil {
+		origin = findOrigin(h, model.OriginSaaSFallback)
+	}
 	if origin == nil {
 		return "", fmt.Errorf("这个域名没有绑定「SaaS 回退源」类型的回源, 先去回源配置里加一个")
 	}
@@ -175,6 +180,14 @@ func applyDNSPodZone(ctx context.Context, h model.Hostname) (string, error) {
 
 	err = dp.CreateDomain(ctx, zone)
 	if errors.Is(err, dnspod.ErrNeedOwnershipTXT) {
+		// 归属验证 TXT 要写在当前的权威 DNS 上。委派模式那就是 CF 父区, 凭据在手能代做;
+		// 直托模式没有父区可写, 只能明确告知, 不能拿空凭据去撞出一个费解的错误
+		if !h.Delegated() {
+			return "", fmt.Errorf(
+				"DNSPod 要求先验证 %s 的归属 (通常是它已被别的账号添加)。"+
+					"请到当前能改这个域名解析的地方按 DNSPod 提示加验证 TXT, 或在 DNSPod 控制台完成找回, 再回来重试",
+				zone)
+		}
 		msg, verifyErr := verifyDNSPodOwnership(ctx, h, dp, zone)
 		if verifyErr != nil {
 			return "", verifyErr
@@ -280,7 +293,8 @@ func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapsho
 		return "", err
 	}
 	zone := h.DNSPodZone()
-	apex := apexRecords(snap.Records)
+	recordName := routeRecordName(h)
+	apex := routeRecords(snap.Records, recordName)
 
 	var created, conflicts []string
 	for _, route := range h.Routes {
@@ -295,7 +309,7 @@ func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapsho
 			continue
 		}
 		err = dp.CreateRecord(ctx, zone, dnspod.NewRecord{
-			SubDomain: "@",
+			SubDomain: recordName,
 			Type:      recordTypeFor(want),
 			Line:      route.Line,
 			Value:     want,
@@ -441,6 +455,19 @@ func needConfirm(header string, lines []string) error {
 // findOrigin 在该域名的线路里找出指定类型的落点, 引用回源与内联填值一视同仁。
 func findOrigin(h model.Hostname, kind string) *model.Origin {
 	for _, r := range h.Routes {
+		if t := r.Target(); t != nil && t.Kind == kind {
+			return t
+		}
+	}
+	return nil
+}
+
+// findLineOrigin 找指定线路上指定类型的落点, 没有则返回 nil。
+func findLineOrigin(h model.Hostname, line, kind string) *model.Origin {
+	for _, r := range h.Routes {
+		if r.Line != line {
+			continue
+		}
 		if t := r.Target(); t != nil && t.Kind == kind {
 			return t
 		}

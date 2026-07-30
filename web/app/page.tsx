@@ -130,7 +130,8 @@ export default function HostnamesPage() {
               </span>
             </div>
             <p className="text-muted-foreground mt-1.5 text-sm">
-              父区 {h.parentZone} · {(h.routes ?? []).length} 条线路
+              {h.parentZone ? `父区 ${h.parentZone}` : "DNSPod 直托"} · {(h.routes ?? []).length}{" "}
+              条线路
               {h.note ? ` · ${h.note}` : ""}
             </p>
             <div className="mt-2.5 flex flex-wrap gap-1.5">

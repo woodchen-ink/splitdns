@@ -13,6 +13,8 @@ export const queryKeys = {
   credentials: () => ["config", "credentials"] as const,
   // credentialId 传 0 表示不限定凭据, 后端聚合全部 CF 账号可见的 zone
   cfZones: (credentialId: number) => ["discover", "cf-zones", credentialId] as const,
+  // 直托模式选域名后缀用; DNSPod 接口必须限定凭据, credentialId 不能为 0
+  dnspodDomains: (credentialId: number) => ["discover", "dnspod-domains", credentialId] as const,
   plan: (id: number) => ["plan", "detail", id] as const,
   report: (hostnameId: number) => ["plan", "report", hostnameId] as const,
 };

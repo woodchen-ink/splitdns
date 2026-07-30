@@ -2,8 +2,11 @@ package model
 
 import "time"
 
-// Hostname 是一个对外提供服务的访问域名, 它的权威 DNS 已从 CF 父区委派到 DNSPod。
-// 一个父区下可以挂任意多个访问域名, 彼此独立。
+// Hostname 是一个对外提供服务的访问域名。它的权威 DNS 在 DNSPod, 来路有两种:
+//   - 委派模式: 主域名在 CF, 该子域名通过父区的 NS 记录委派到 DNSPod
+//   - 直托模式: 根域名本来就托管在 DNSPod, 没有 CF 父区 (ParentZone 为空)
+//
+// 两种模式的区分统一走 Delegated(), 不在各处重复判 ParentZone。
 type Hostname struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -11,16 +14,18 @@ type Hostname struct {
 
 	// Hostname 对外主机名, 如 img.example.com
 	Hostname string `gorm:"column:hostname;size:253;uniqueIndex;not null" json:"hostname"`
-	// ParentZone 主域名所在的 CF zone, 委派 NS 加在这里
+	// ParentZone 主域名所在的 CF zone, 委派 NS 加在这里; 为空表示直托模式, 没有 CF 父区
 	ParentZone string `gorm:"column:parent_zone;size:253;index;not null" json:"parentZone"`
 	// SaaSZone 承载自定义主机名的 CF zone; 为空表示该域名不走 CF for SaaS
 	SaaSZone string `gorm:"column:saas_zone;size:253;index" json:"saasZone"`
-	// DNSPodDomain DNSPod 上托管的域名, 留空取 Hostname 本身
+	// DNSPodDomain DNSPod 上托管的域名, 留空取 Hostname 本身。
+	// 委派模式下就是被委派的子域名 (整串加进 DNSPod); 直托模式下是管辖访问域名的那个根域名,
+	// 保存时按凭据可见的域名列表推导
 	DNSPodDomain string `gorm:"column:dnspod_domain;size:253" json:"dnspodDomain"`
 
-	// CFCredentialID 访问 CF 用的凭据; 父区与 SaaS 区分属不同账号时用 SaaSCredentialID 覆盖
+	// CFCredentialID 访问 CF 父区用的凭据; 直托模式没有父区, 恒为 0
 	CFCredentialID uint `gorm:"column:cf_credential_id;index" json:"cfCredentialId"`
-	// SaaSCredentialID SaaS 区所在账号的凭据, 为 0 时复用 CFCredentialID
+	// SaaSCredentialID SaaS 区所在账号的凭据, 为 0 时复用 CFCredentialID (直托模式下保存时必定填上)
 	SaaSCredentialID uint `gorm:"column:saas_credential_id;index" json:"saasCredentialId"`
 	// DNSPodCredentialID 访问 DNSPod 用的凭据
 	DNSPodCredentialID uint `gorm:"column:dnspod_credential_id;index" json:"dnspodCredentialId"`
@@ -35,6 +40,12 @@ type Hostname struct {
 }
 
 func (Hostname) TableName() string { return "hostname" }
+
+// Delegated 判定该域名是否是"从 CF 父区委派"的接入方式; 为假即直托模式。
+// 与委派 / 父区相关的步骤、巡检、拆除都只在委派模式下存在。
+func (h Hostname) Delegated() bool {
+	return h.ParentZone != ""
+}
 
 // DNSPodZone 返回 DNSPod 上实际托管的域名, 未显式配置时回落到 Hostname。
 func (h Hostname) DNSPodZone() string {

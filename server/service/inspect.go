@@ -36,7 +36,11 @@ func Inspect(ctx context.Context, h model.Hostname) model.HostnameReport {
 }
 
 // inspectParentZone 读 CF 父区: 委派 NS 记录, 被该委派遮蔽的记录, 以及本工具留下的辅助记录。
+// 直托模式没有父区, 整段跳过 —— 这一路不存在, 不是"没读到"。
 func inspectParentZone(ctx context.Context, h model.Hostname, snap *model.Snapshot) []model.Finding {
+	if !h.Delegated() {
+		return nil
+	}
 	cf, err := cloudflareClient(h.CFCredentialID)
 	if err != nil {
 		return fetchFailed(snap, model.FetchParent, "fetch.parent_credential", "父区凭据不可用", err)
@@ -186,6 +190,7 @@ func inspectDNSPod(ctx context.Context, h model.Hostname, snap *model.Snapshot) 
 		snap.DNSPodNameservers = d.Nameservers
 		snap.DNSPodEnabled = d.Enabled
 		snap.DNSPodStatus = d.Status
+		snap.DNSPodDNSStatus = d.DNSStatus
 	case errors.Is(err, dnspod.ErrDomainNotFound):
 		// 域名不在账号下不是拉取故障: 配置流程里是"还没加", 拆除流程里是"已经删干净"。
 		// 该不该报错交给规则层判, 这里只如实记下状态

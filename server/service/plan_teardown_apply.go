@@ -82,7 +82,7 @@ func teardownDNSPodRecords(ctx context.Context, h model.Hostname, confirm bool) 
 	var doomed []dnspod.Record
 	var kept []string
 	for _, r := range records {
-		if isManagedRecord(r.Name, r.Type) {
+		if isManagedRecord(h, r.Name, r.Line, r.Type) {
 			doomed = append(doomed, r)
 			continue
 		}

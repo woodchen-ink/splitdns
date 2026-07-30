@@ -40,21 +40,26 @@ func GetHostname(w http.ResponseWriter, r *http.Request) {
 
 // SaveHostname POST /api/hostnames  (带 id 即更新)
 func SaveHostname(w http.ResponseWriter, r *http.Request) {
-	var h model.Hostname
-	if err := json.NewDecoder(r.Body).Decode(&h); err != nil {
+	// directDnspod 是请求专属的模式声明, 不落库: 空 ParentZone 在委派模式下是"待推导"、
+	// 直托模式下是"就该为空", 不带这个标记后端没法区分这两种意图
+	var req struct {
+		model.Hostname
+		DirectDNSPod bool `json:"directDnspod"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		resputil.Fail(w, 400, "请求体格式错误: "+err.Error())
 		return
 	}
-	if h.Hostname == "" {
+	if req.Hostname.Hostname == "" {
 		resputil.Fail(w, 400, "访问域名不能为空")
 		return
 	}
 	// 不校验 CF 凭据: 留空时由 service 按访问域名反查出该用哪个账号
-	if err := service.SaveHostname(r.Context(), &h); err != nil {
+	if err := service.SaveHostname(r.Context(), &req.Hostname, req.DirectDNSPod); err != nil {
 		resputil.Fail(w, 500, err.Error())
 		return
 	}
-	resputil.OK(w, h)
+	resputil.OK(w, req.Hostname)
 }
 
 // DeleteHostname DELETE /api/hostnames/{id}
