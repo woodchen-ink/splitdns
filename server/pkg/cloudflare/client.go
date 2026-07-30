@@ -133,8 +133,8 @@ func (c *Client) VerifyToken(ctx context.Context) (string, error) {
 // ListZoneNames 列出该 Token 可见的 zone 名。
 // 用来确认权限范围确实覆盖了要操作的父区与 SaaS 区 —— Token 有效不代表范围够。
 func (c *Client) ListZoneNames(ctx context.Context) ([]string, error) {
-	var zones []zone
-	if err := c.get(ctx, "/zones", url.Values{"per_page": {"50"}}, &zones); err != nil {
+	zones, err := c.ListZones(ctx)
+	if err != nil {
 		return nil, err
 	}
 	names := make([]string, 0, len(zones))

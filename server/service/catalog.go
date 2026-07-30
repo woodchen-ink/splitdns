@@ -21,7 +21,19 @@ func SaveOrigin(o *model.Origin) error {
 	if o.Name == "" || o.Value == "" {
 		return fmt.Errorf("回源的名称和落点值都不能为空")
 	}
+	fillCustomOriginSNI(&o.Kind, &o.Value, &o.SNI)
 	return database.DB.Save(o).Error
+}
+
+// fillCustomOriginSNI 给自定义源补上回源 SNI: 它就是源服务器主机名本身。
+//
+// CF 回源时默认拿源服务器名字当 SNI, 单独指定别的名字是企业版才有的能力 (非企业账号发了直接被 1456 拒)。
+// 留空虽然也能正常回源, 却会让"源站要给这个名字挂 router"这件事从流程里消失 —— 缺了它回源就是 403,
+// 所以宁可显式填上, 让 NeedsSNIRoute 认得出来。用户显式填了别的值时不覆盖。
+func fillCustomOriginSNI(kind, value, sni *string) {
+	if *kind == model.OriginSaaSCustom && *sni == "" {
+		*sni = *value
+	}
 }
 
 // DeleteOrigin 删除回源。仍被线路引用时拒绝删除, 避免留下悬空引用让巡检报一堆假错。

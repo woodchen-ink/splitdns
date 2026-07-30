@@ -135,11 +135,10 @@ func inspectSaaSZone(ctx context.Context, h model.Hostname, snap *model.Snapshot
 	}
 	if ch != nil {
 		snap.CustomHostname = mapCustomHostname(ch)
-		// 自定义源服务器背后是哪台机器, 决定了 SNI 路由该加在哪 —— 顺手查出来放进指令里
+		// 自定义源服务器那条记录既决定 SNI 路由该加在哪台机器上, 本身也是回源的前提条件:
+		// CF 要求它是一条橙云记录, 没建或灰云都会让回源直接失败
 		if ch.CustomOriginServer != "" {
-			if recs, err := cf.ListRecords(ctx, zoneID, ch.CustomOriginServer, ""); err == nil && len(recs) > 0 {
-				snap.CustomHostname.CustomOriginAddress = recs[0].Content
-			}
+			snap.CustomHostname.CustomOriginRecord = lookupOriginRecord(ctx, cf, zoneID, h.SaaSZone, ch.CustomOriginServer)
 		}
 	}
 	return nil

@@ -19,7 +19,6 @@ var ErrNeedConfirm = fmt.Errorf("需要确认")
 // 因此下面几个备注文案必须都以 cfCommentPrefix 开头。
 const (
 	cfCommentPrefix   = "splitdns"
-	commentFallback   = cfCommentPrefix + " 自动创建的回退源"
 	commentOwnership  = cfCommentPrefix + ": DNSPod 域名归属验证"
 	commentDelegation = cfCommentPrefix + " 委派"
 )
@@ -95,28 +94,14 @@ func applyFallbackOrigin(ctx context.Context, h model.Hostname, snap model.Snaps
 		return "", err
 	}
 
+	// 回退源与自定义源服务器对那条橙云记录的要求完全一样, 建 / 校验都走同一处
 	var actions []string
-	existing, err := cf.ListRecords(ctx, zoneID, origin.Value, "")
+	created, err := ensureOriginRecord(ctx, cf, zoneID, h.SaaSZone, *origin)
 	if err != nil {
 		return "", err
 	}
-	if len(existing) == 0 {
-		if origin.Address == "" {
-			return "", fmt.Errorf("SaaS 区里还没有 %s 这条记录, 请先在回源配置里填上源站 IP, 或自己去 CF 建好这条橙云记录", origin.Value)
-		}
-		_, err = cf.CreateRecord(ctx, zoneID, cloudflare.NewRecord{
-			Type:    "A",
-			Name:    origin.Value,
-			Content: origin.Address,
-			Proxied: true,
-			Comment: commentFallback,
-		})
-		if err != nil {
-			return "", err
-		}
-		actions = append(actions, fmt.Sprintf("建了橙云记录 %s → %s", origin.Value, origin.Address))
-	} else if !existing[0].Proxied {
-		return "", fmt.Errorf("%s 这条记录是灰云的, 回退源必须是橙云记录, 请先在 CF 里打开代理", origin.Value)
+	if created != "" {
+		actions = append(actions, created)
 	}
 
 	if !sameName(snap.FallbackOrigin, origin.Value) {

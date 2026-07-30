@@ -33,6 +33,30 @@ func SaveOrigin(w http.ResponseWriter, r *http.Request) {
 	resputil.OK(w, o)
 }
 
+// InspectOriginDNS GET /api/origins/dns 逐个回源看它的落点在 CF 上落地了没有
+func InspectOriginDNS(w http.ResponseWriter, r *http.Request) {
+	list, err := service.InspectOriginDNS(r.Context())
+	if err != nil {
+		resputil.Fail(w, 500, err.Error())
+		return
+	}
+	resputil.OK(w, list)
+}
+
+// CreateOriginRecord POST /api/origins/{id}/dns 把缺的那条落点记录建到 CF 上
+func CreateOriginRecord(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	msg, err := service.CreateOriginRecord(r.Context(), id)
+	if err != nil {
+		resputil.Fail(w, 400, err.Error())
+		return
+	}
+	resputil.OKMsg(w, nil, msg)
+}
+
 // DeleteOrigin DELETE /api/origins/{id}
 func DeleteOrigin(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)

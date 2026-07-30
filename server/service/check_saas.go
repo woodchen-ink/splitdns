@@ -79,7 +79,40 @@ func checkSaaS(h model.Hostname, snap model.Snapshot) []model.Finding {
 	if f, ok := checkCertExpiry(ch.CertExpiresAt); ok {
 		out = append(out, f)
 	}
-	return append(out, checkCustomOrigin(h, ch)...)
+	out = append(out, checkCustomOrigin(h, ch)...)
+	return append(out, checkCustomOriginRecord(ch)...)
+}
+
+// checkCustomOriginRecord 校验自定义源服务器那条解析记录本身。
+//
+// CF 要求它必须是本账号 DNS 里的一条橙云记录: 没建或者是灰云, 回源都会直接失败,
+// 而自定义主机名页面上完全看不出来 —— 主机名状态、证书状态照样是有效。
+// 这条记录不一定建在 SaaS 区里, 不在时巡检查不到, 那种情况按"没查过"处理, 不下结论。
+func checkCustomOriginRecord(ch model.CustomHostnameState) []model.Finding {
+	rec := ch.CustomOriginRecord
+	if !rec.Checked {
+		return nil
+	}
+	if !rec.Found {
+		return []model.Finding{{
+			Level:  model.LevelError,
+			Code:   "saas.custom_origin_record_missing",
+			Title:  "自定义源服务器没有对应的解析记录",
+			Detail: fmt.Sprintf("CF 上查不到 %s 的任何记录", ch.CustomOrigin),
+			Fix: "CF 要求自定义源服务器是本账号 DNS 里的一条橙云记录。" +
+				"到「回源」页面给它填上源站 IP 再点「建解析」, 或者自己在 CF 建一条指向源站的橙云记录",
+		}}
+	}
+	if !rec.Proxied {
+		return []model.Finding{{
+			Level:  model.LevelError,
+			Code:   "saas.custom_origin_record_grey",
+			Title:  "自定义源服务器那条记录是灰云的",
+			Detail: fmt.Sprintf("%s %s → %s", rec.Type, ch.CustomOrigin, rec.Content),
+			Fix:    "在 CF 里给这条记录打开代理。灰云时 CF 不会把流量转过去, 回源直接失败",
+		}}
+	}
+	return nil
 }
 
 // checkCustomOrigin 比对配置里的自定义源服务器与 CF 上实际生效的值。

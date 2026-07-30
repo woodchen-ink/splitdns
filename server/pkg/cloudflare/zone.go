@@ -4,18 +4,41 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
-// zone 是 zone 列表接口需要的最小字段集。
-type zone struct {
+// Zone 是 zone 列表接口需要的最小字段集: 名字用来匹配, ID 用来发后续请求。
+type Zone struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
+// ListZones 列出该 Token 可见的全部 zone。
+// 按主机名反查它归哪个区管时用这个而不是 ListZoneNames —— 匹配到之后还要 zone ID, 不必再查一次。
+//
+// CF 一页最多给 50 个, 这里翻到底: 少读一页会让"这个名字不归我们管"的判定凭空成立,
+// 而那个判定的后果是整条落点检查被静默跳过。上限 20 页纯粹是防跑飞。
+func (c *Client) ListZones(ctx context.Context) ([]Zone, error) {
+	const perPage = 50
+	var all []Zone
+	for page := 1; page <= 20; page++ {
+		var batch []Zone
+		q := url.Values{"per_page": {strconv.Itoa(perPage)}, "page": {strconv.Itoa(page)}}
+		if err := c.get(ctx, "/zones", q, &batch); err != nil {
+			return nil, err
+		}
+		all = append(all, batch...)
+		if len(batch) < perPage {
+			break
+		}
+	}
+	return all, nil
+}
+
 // ZoneIDByName 按 zone 名查 zone ID。查不到时返回明确错误, 不返回空字符串让调用方猜。
 func (c *Client) ZoneIDByName(ctx context.Context, name string) (string, error) {
-	var zones []zone
+	var zones []Zone
 	q := url.Values{"name": {name}}
 	if err := c.get(ctx, "/zones", q, &zones); err != nil {
 		return "", err

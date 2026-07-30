@@ -94,15 +94,28 @@ type CustomHostnameState struct {
 	CustomOrigin string `json:"customOrigin"`
 	// CustomOriginSNI 回源 TLS 握手使用的 SNI
 	CustomOriginSNI string `json:"customOriginSni"`
-	// CustomOriginAddress 自定义源服务器那条记录在 SaaS 区里指向的地址,
-	// 用来告诉用户 SNI 路由要加在哪台机器上
-	CustomOriginAddress string `json:"customOriginAddress"`
+	// CustomOriginRecord 自定义源服务器那条解析记录的实际状态
+	CustomOriginRecord OriginRecordState `json:"customOriginRecord"`
 	// OwnershipTXT CF 要求的归属验证 TXT
 	OwnershipTXT TXTRequirement `json:"ownershipTxt"`
 	// DCVTXT CF 要求的证书 DCV TXT; 证书带通配符 SAN 时会有多条同名不同值的记录
 	DCVTXT []TXTRequirement `json:"dcvTxt"`
 	// MinTLSVersion 最低 TLS 版本
 	MinTLSVersion string `json:"minTlsVersion"`
+}
+
+// OriginRecordState 是"回源落点主机名"在 CF 上那条解析记录的实际状态。
+//
+// CF for SaaS 要求自定义源服务器必须是本账号 DNS 里的一条橙云记录: 没建或者是灰云,
+// 回源都会直接失败, 而自定义主机名页面上完全看不出异常 —— 状态照样显示有效。
+// Checked 与 Found 必须分开: 记录不一定建在 SaaS 区里, 那时是"没查过", 不是"没有"。
+type OriginRecordState struct {
+	// Checked 这一轮有没有真的去查过。为 false 时下面几个字段一律没有意义
+	Checked bool `json:"checked"`
+	Found   bool `json:"found"`
+	Type    string `json:"type"`
+	Content string `json:"content"`
+	Proxied bool   `json:"proxied"`
 }
 
 // TXTRequirement 是一条需要落到权威 DNS 上的 TXT 记录。

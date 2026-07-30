@@ -170,9 +170,10 @@ export default function CredentialsPage() {
         {(data ?? []).map((c) => (
           <div
             key={c.id}
-            className="border-border/60 flex flex-wrap items-start justify-between gap-3 rounded-xl border p-4"
+            className="border-border/60 flex items-start justify-between gap-3 rounded-xl border p-4"
           >
-            <div className="min-w-0">
+            {/* flex-1 + min-w-0: 基准宽度归零, 否则"可见范围"那行长起来会把按钮挤到第二行 */}
+            <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">{c.name}</span>
                 <Badge variant="outline" className="font-normal">
@@ -198,7 +199,7 @@ export default function CredentialsPage() {
                 </p>
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex shrink-0 gap-2">
               <Button
                 variant="outline"
                 size="sm"

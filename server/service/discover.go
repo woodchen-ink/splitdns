@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/woodchen-ink/splitdns/server/model"
@@ -11,47 +12,73 @@ import (
 // 配置里那些要手打的域名, 在平台上本来就存在。这一组接口把它们读出来供界面直接选,
 // 少一次手打就少一类"多打一个字母查半天"的问题。
 
+// CFZone 是一个可选的 CF zone 以及它归哪份凭据管。
+// 表单里挑完 zone 就能顺带把账号定下来, 不必让用户先选凭据再选区。
+type CFZone struct {
+	Zone           string `json:"zone"`
+	CredentialID   uint   `json:"credentialId"`
+	CredentialName string `json:"credentialName"`
+}
+
 // CloudflareZones 列出某份 CF 凭据可见的 zone。
-func CloudflareZones(ctx context.Context, credentialID uint) ([]string, error) {
+// credentialID 为 0 表示不限定凭据, 聚合全部 CF 账号 —— 域名与回源的后缀可能落在任意一个账号下,
+// 挑后缀时不该逼用户先选账号。
+func CloudflareZones(ctx context.Context, credentialID uint) ([]CFZone, error) {
+	if credentialID == 0 {
+		return newCFZoneLocator().zoneOptions(ctx)
+	}
+	var c model.Credential
+	if err := credentialRecord(credentialID, &c); err != nil {
+		return nil, err
+	}
 	cf, err := cloudflareClient(credentialID)
 	if err != nil {
 		return nil, err
 	}
-	return cf.ListZoneNames(ctx)
+	names, err := cf.ListZoneNames(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CFZone, 0, len(names))
+	for _, name := range names {
+		out = append(out, CFZone{Zone: normalizeName(name), CredentialID: c.ID, CredentialName: c.Name})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Zone < out[j].Zone })
+	return out, nil
 }
 
-// DeriveParentZone 从访问域名推导它所属的 CF 父区。
+// DeriveParentZone 从访问域名推导它所属的 CF 父区, 并带出该区归哪份凭据管。
 //
 // 取"可见 zone 里能匹配上的最长后缀": example.com 与 sub.example.com 同时存在时,
 // a.sub.example.com 属于更具体的 sub.example.com —— 那才是对它有权威的 zone。
-func DeriveParentZone(ctx context.Context, credentialID uint, hostname string) (string, error) {
+// credentialID 为 0 时在全部 CF 账号里找, 找到哪个账号就用哪个。
+func DeriveParentZone(ctx context.Context, credentialID uint, hostname string) (CFZone, error) {
 	host := normalizeName(hostname)
 	if host == "" {
-		return "", fmt.Errorf("还没填访问域名")
+		return CFZone{}, fmt.Errorf("还没填访问域名")
 	}
 	zones, err := CloudflareZones(ctx, credentialID)
 	if err != nil {
-		return "", err
+		return CFZone{}, err
 	}
 
-	best := ""
+	var best CFZone
 	for _, z := range zones {
-		zone := normalizeName(z)
-		if zone == "" {
+		if z.Zone == "" || (host != z.Zone && !strings.HasSuffix(host, "."+z.Zone)) {
 			continue
 		}
-		if host != zone && !strings.HasSuffix(host, "."+zone) {
-			continue
-		}
-		if len(zone) > len(best) {
-			best = zone
+		if len(z.Zone) > len(best.Zone) {
+			best = z
 		}
 	}
-	if best == "" {
-		return "", fmt.Errorf("这份凭据看不到 %s 所属的 zone, 确认 Token 的作用范围", hostname)
+	if best.Zone == "" {
+		if credentialID == 0 {
+			return CFZone{}, fmt.Errorf("现有的 CF 凭据都看不到 %s 所属的 zone, 确认 Token 的作用范围", hostname)
+		}
+		return CFZone{}, fmt.Errorf("这份凭据看不到 %s 所属的 zone, 确认 Token 的作用范围", hostname)
 	}
-	if best == host {
-		return "", fmt.Errorf("%s 本身就是一个 CF zone, 这个工具是拿来委派子域名的", hostname)
+	if best.Zone == host {
+		return CFZone{}, fmt.Errorf("%s 本身就是一个 CF zone, 这个工具是拿来委派子域名的", hostname)
 	}
 	return best, nil
 }

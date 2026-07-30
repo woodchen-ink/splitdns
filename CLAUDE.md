@@ -22,7 +22,11 @@
 
 - `credential` — 平台 API 凭据 (Cloudflare / 腾讯云 DNSPod)。密钥字段 `json:"-"`, 只写不读;
   **写入必须走 handler 里单独的入参结构** —— `json:"-"` 是双向的, 靠 model tag 会把请求体里的密钥一起丢掉
-- `origin` — 回源目标。一个回源可被多个访问域名共用, 改一处全部跟着变
+- `origin` — 回源目标。一个回源可被多个访问域名共用, 改一处全部跟着变。
+  `address` 是落点主机名背后的源站 IP, 只在程序要替你建那条橙云记录时才用得上;
+  双栈用逗号 / 空白分隔填多个 (IPv4 建 A、IPv6 建 AAAA), 解析用 `originAddresses()`。
+  `saas_custom` 的 `sni` 恒等于落点值 (`fillCustomOriginSNI`, 回源库与内联落点两条写入路径都过一遍):
+  CF 默认拿源服务器名握手, 留空虽然也能回源, 却会让"源站要给这个名字挂 router"从流程里消失
 - `hostname` — 访问域名, 记录它在 CF 父区 / CF SaaS 区 / DNSPod 三处的落点
 - `route` — `访问域名 × 线路 → 落点` 的绑定。落点二选一: 引用 `origin`, 或直接内联填值 (`origin_id` 为 0),
   判定统一走 `Route.Target()`
@@ -32,16 +36,38 @@
 
 `origin.kind` 与 `step.key` 都是开放式取值: 消费侧按模式识别 + 兜底处理, 新增取值不需要前端同步发版。
 
+**bool 字段一律不写 `default` 标签**: GORM 对带默认值的字段会跳过零值, `false` 会被悄悄写成 DB 默认的
+`true` —— `step.verifiable` 和 `hostname.enabled` 都栽过 (前者让"需人工确认"的步骤先显示成能自动执行,
+巡检一轮后又翻回来)。要 DB 默认值就用指针类型, 不要两者都要。
+
 ## 核心行为
 
 - **巡检** (`service/inspect.go` + `check*.go`): 一次拉齐三个平台的实际状态, 再按规则判定。
   任何一处拉取失败都转成 Finding, 不让整个报告消失; 同时记进 `Snapshot.FetchErrors`,
   **判定层必须区分"确实没有"和"根本没读到"** —— 两者在快照里长得一模一样, 混淆会让拆除流程谎报清干净了
 - **流程** (`service/plan*.go`): 步骤分 `manual` / `auto` / `wait`。
-  能自动做的直接调 API, 做完仍然走一次巡检验证 —— 平台接口返回 200 不等于配置已经生效
+  能自动做的直接调 API, 做完仍然走一次巡检验证 —— 平台接口返回 200 不等于配置已经生效。
+  **同一域名同一类型只留一条流程, 进页面时复用并把步骤对齐当前配置** (`syncSteps`: 缺的补、
+  不适用的删、模板信息覆盖、状态与时间戳保留)。**不能只复用 `running` 的** —— 走完最后一步流程就变 `done`,
+  再按 `running` 找必然落空而重建一条, 手动确认过的步骤全部回到未开始; 能自动验证的会被下一轮巡检立刻翻回完成,
+  于是看起来只有"程序验不了的那一步"在反复退回
+- **列表页的进度** (`service/plan_progress.go`): `GET /api/hostnames` 每个域名带上各条流程的完成度,
+  数据全来自本地库的步骤状态 (`done + skipped` 算走完), **列表页一个平台接口都不调** —— 逐个域名巡检慢且吃配额,
+  实际状态进详情页按需巡检。同一类型有多条流程时只留一条: 优先在跑的, 否则取最新的
+- **账号自动匹配** (`service/discover.go`): `/api/discover/cf-zones` 返回 `zone + 归属凭据`, 不带 `credentialId`
+  就聚合全部 CF 账号; `/api/discover/parent-zone` 同样带出凭据。存域名时 `cfCredentialId` 可以留空, 由访问域名反查填上 ——
+  域名落在哪个账号下是客观事实, 不该让人先选账号再选区。SaaS 区落在别的账号时才写 `saasCredentialId`
+- **回源落点解析** (`service/origin_dns.go`): 落点是主机名时, CF 里必须有一条指向源站的橙云记录, 流量才转得出去。
+  回源是多个域名共用的公共资料、身上没有凭据与 zone, 所以按"哪份 CF 凭据看得见管辖这个名字的 zone"反查
+  (最长后缀匹配, 判据同 `DeriveParentZone`)。**读不到 zone 列表时必须报"无法判定"而不是"不归我们管"** ——
+  后者会让整条检查静默消失。建记录只补缺失, 已存在的一律不覆盖: 那是线上正在生效的解析。
+  **同名多条记录是正常的** (A + AAAA 双栈), 只有同一类型重复才算说不清; 登记的源站 IP 只跟同类型的那条比。
+  回退源那条橙云记录走的是同一个 `ensureOriginRecord`
 - **拆除流程** (`service/plan_teardown*.go`, `step.key` 前缀 `teardown.`): 按 撤委派 → 清 DNSPod 记录 →
   删 DNSPod 域名 → 删自定义主机名 → 清回退源 → 清父区验证记录 的顺序逐步撤。
   **第一步必须是撤委派**: 反过来先删 DNSPod 域名, 委派还指着不再托管它的 NS, 解析器拿到 SERVFAIL 且会一直重试。
+  删自定义主机名时一并清掉本工具为它建的落点记录, 但区里还有别的自定义主机名指着同一个源服务器、
+  或它本身就是回退源时不动 —— 少删一条只是残留, 多删一条是别人的线上流量。
   删本地记录不在流程里 (删完流程自己也没了), 走 `DELETE /api/hostnames/{id}`
 - **不可逆操作**: 清理父区被遮蔽的记录, 以及全部拆除步骤。未带 `confirm` 时只返回待删清单并报 `ErrNeedConfirm`,
   清单必须逐条列出来, 只报"有 N 条"等于让人闭眼点确认
@@ -54,6 +80,8 @@
 ## 平台上踩过的坑 (改动相关代码前先看这里)
 
 - **CF for SaaS 的自定义源服务器不是解析目标**: 解析指向 SaaS 区里任意一条橙云记录即可, 边缘按 Host 头找自定义主机名
+- **但自定义源服务器自己必须是本账号 DNS 里的一条橙云记录** (CF 明文要求, 不能填 IP): 没建或者是灰云,
+  回源就直接失败, 而自定义主机名页面上主机名状态、证书状态照样显示有效, 从那边一点异常都看不出来
 - **`custom_origin_sni` 是企业版字段** (错误码 1456): 与源服务器同名时根本不用发, CF 默认就拿它当 SNI
 - **DNSPod 免费版 TTL 最低 600**, 更小的值接口直接拒; 线路只有 默认 / 境内 / 境外
 - **DNSPod 新加的域名默认暂停**, 不启用解析则记录全对也不生效; 状态判定用黑名单 (只有 PAUSE/SPAM 算停),
@@ -67,6 +95,9 @@
 - **WebView2 里 multipart 上传的文件部分是空的**: 上传走裸请求体, 别用 `FormData`
 
 ## 前端要点
+
+- **主机名一律用 `components/host-picker.tsx` 输入**: 打前缀 + 选 CF 域名后缀, 后缀选不到时才退回手打整串。
+  `manual` 状态由调用方持有, 不能靠"当前值匹不匹配得上"反推 —— 那样用户刚清空前缀就会被弹回选择模式
 
 - 这版 shadcn 底层是 **Base UI 不是 Radix**: `Select.Value` 默认渲染 value 本身, 要传函数才显示选项文字;
   `Button` 没有 `asChild`, 用 `buttonVariants()` 给 `Link` 加 class
@@ -85,6 +116,14 @@ cd server && go build ./... && go vet ./...
 
 ```bash
 cd web && npm run build && npx eslint app components lib
+```
+
+图标是用代码画的 (SDF 光栅化, 每个尺寸按自身分辨率单独渲染, 不是缩放大图),
+改完 `desktop/tools/icongen/main.go` 里的坐标 / 配色重跑即可, 一次覆盖三处产物
+(`desktop/build/appicon.png`、`desktop/build/windows/icon.ico`、`web/app/favicon.ico`):
+
+```bash
+cd desktop && go run ./tools/icongen
 ```
 
 出包 (产物在 `desktop/build/bin/`):

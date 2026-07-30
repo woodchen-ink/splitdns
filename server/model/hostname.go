@@ -25,8 +25,9 @@ type Hostname struct {
 	// DNSPodCredentialID 访问 DNSPod 用的凭据
 	DNSPodCredentialID uint `gorm:"column:dnspod_credential_id;index" json:"dnspodCredentialId"`
 
-	// Enabled 关闭后不参与巡检, 用于临时下线的域名
-	Enabled bool `gorm:"column:enabled;not null;default:true" json:"enabled"`
+	// Enabled 关闭后不参与巡检, 用于临时下线的域名。
+	// 同样不能带 default: GORM 会跳过零值, 新建时关掉的开关会被写成打开 (前端始终显式提交这个字段)
+	Enabled bool `gorm:"column:enabled;not null" json:"enabled"`
 	Note    string `gorm:"column:note;size:512" json:"note"`
 
 	// Routes 该域名的全部线路落点
@@ -68,8 +69,8 @@ type Route struct {
 	Kind string `gorm:"column:kind;size:32" json:"kind"`
 	// Value 内联落点值
 	Value string `gorm:"column:value;size:256" json:"value"`
-	// Address 内联落点背后的源站 IP, 仅在需要程序代建橙云记录时用到
-	Address string `gorm:"column:address;size:64" json:"address"`
+	// Address 内联落点背后的源站 IP, 仅在需要程序代建橙云记录时用到; 双栈同样用分隔符填多个
+	Address string `gorm:"column:address;size:128" json:"address"`
 	// SNI 内联落点的回源 SNI
 	SNI string `gorm:"column:sni;size:256" json:"sni"`
 

@@ -80,9 +80,9 @@ func RefreshPlan(ctx context.Context, planID uint) (*PlanView, error) {
 		}
 	}
 
-	if allDone && plan.Status != "done" {
-		plan.Status = "done"
-		if err := database.DB.Model(plan).Update("status", "done").Error; err != nil {
+	if allDone && plan.Status != model.PlanDone {
+		plan.Status = model.PlanDone
+		if err := database.DB.Model(plan).Update("status", model.PlanDone).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -184,7 +184,7 @@ func sniRouteInstruction(h model.Hostname, snap model.Snapshot) string {
 		return "这个域名当前没有自定义源服务器, 这一步可以直接确认完成。"
 	}
 
-	addr := snap.CustomHostname.CustomOriginAddress
+	addr := snap.CustomHostname.CustomOriginRecord.Content
 	where := fmt.Sprintf("%s 指向的那台机器", origin)
 	if addr != "" {
 		where = fmt.Sprintf("%s (%s) 那台机器", origin, addr)

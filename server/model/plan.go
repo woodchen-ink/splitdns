@@ -31,6 +31,12 @@ const (
 	PlanTeardown = "teardown"
 )
 
+// 流程状态。
+const (
+	PlanRunning = "running"
+	PlanDone    = "done"
+)
+
 // Plan 是一次"把某个访问域名配置到位"或"把它拆干净"的流程实例。
 // 持久化是为了让用户关掉页面后能接着走 —— 这个流程里有多步需要等 DNS 生效, 天然跨会话。
 type Plan struct {
@@ -85,8 +91,10 @@ type Step struct {
 	// LastError 最近一次验证未通过的原因, 通过后清空
 	LastError string `gorm:"column:last_error;type:text" json:"lastError"`
 
-	// Verifiable 该步能否由程序自动验证; 为 false 的步骤 (如源站 SNI 路由) 只能用户自行确认
-	Verifiable bool `gorm:"column:verifiable;not null;default:true" json:"verifiable"`
+	// Verifiable 该步能否由程序自动验证; 为 false 的步骤 (如源站 SNI 路由) 只能用户自行确认。
+	// 不能带 default 标签: GORM 对有默认值的字段会跳过零值, false 会被悄悄写成 true,
+	// 那一步就会先显示"自动执行", 巡检一轮后又翻成"需人工确认"
+	Verifiable bool `gorm:"column:verifiable;not null" json:"verifiable"`
 }
 
 func (Step) TableName() string { return "step" }

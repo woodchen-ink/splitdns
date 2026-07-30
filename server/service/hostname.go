@@ -24,8 +24,16 @@ func HostnameByID(id uint) (*model.Hostname, error) {
 	return &h, nil
 }
 
-// ListHostnames 按关键字分页列出访问域名。域名多起来之后列表必须能搜, 不做全量返回。
-func ListHostnames(keyword string, offset, limit int) ([]model.Hostname, int64, error) {
+// HostnameListItem 是列表页的视图模型: 域名本体 + 各条流程的完成度。
+// 完成度由后端算好, 前端只渲染 —— "skipped 也算走完"这类口径只该有一处。
+type HostnameListItem struct {
+	model.Hostname
+	Plans []PlanProgress `json:"plans"`
+}
+
+// ListHostnames 按关键字分页列出访问域名, 连带每个域名的流程完成度。
+// 域名多起来之后列表必须能搜, 不做全量返回。
+func ListHostnames(keyword string, offset, limit int) ([]HostnameListItem, int64, error) {
 	q := database.DB.Model(&model.Hostname{})
 	if keyword != "" {
 		like := "%" + keyword + "%"
@@ -43,20 +51,40 @@ func ListHostnames(keyword string, offset, limit int) ([]model.Hostname, int64, 
 	var list []model.Hostname
 	err := q.Preload("Routes").Preload("Routes.Origin").
 		Order("hostname").Offset(offset).Limit(limit).Find(&list).Error
-	return list, total, err
+	if err != nil {
+		return nil, 0, err
+	}
+
+	ids := make([]uint, 0, len(list))
+	for _, h := range list {
+		ids = append(ids, h.ID)
+	}
+	progress, err := planProgressByHostname(ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]HostnameListItem, 0, len(list))
+	for _, h := range list {
+		items = append(items, HostnameListItem{Hostname: h, Plans: progress[h.ID]})
+	}
+	return items, total, nil
 }
 
 // SaveHostname 新建或更新访问域名, 连同线路一起整体替换。
 // 线路是从属于域名的配置项, 整体替换比逐条 diff 简单可靠, 数量也就几条。
 //
-// 父区不让用户填: 拿访问域名去 CF 可见的 zone 里推导即可, 让人手打只会多一处填错的地方。
+// 父区与它归哪份 CF 凭据管都不让用户填: 拿访问域名去可见 zone 里推导即可, 手打只会多两处填错的地方。
+// 没指定凭据时在全部 CF 账号里找, 找到哪个账号就用哪个 —— 域名落在哪个账号下是客观事实, 不该让人再确认一遍。
 func SaveHostname(ctx context.Context, h *model.Hostname) error {
-	if h.ParentZone == "" {
+	if h.ParentZone == "" || h.CFCredentialID == 0 {
 		zone, err := DeriveParentZone(ctx, h.CFCredentialID, h.Hostname)
 		if err != nil {
 			return err
 		}
-		h.ParentZone = zone
+		h.ParentZone = zone.Zone
+		if h.CFCredentialID == 0 {
+			h.CFCredentialID = zone.CredentialID
+		}
 	}
 	if h.SaaSZone != "" && sameName(h.SaaSZone, h.ParentZone) {
 		return fmt.Errorf("SaaS 区不能就是父区 %s —— 自定义主机名不能是 SaaS 区自己的子域", h.ParentZone)
@@ -72,6 +100,10 @@ func SaveHostname(ctx context.Context, h *model.Hostname) error {
 		for i := range h.Routes {
 			h.Routes[i].Origin = nil
 			h.Routes[i].ID = 0
+			// 内联落点与回源库里的条目同一套规则, 自定义源的 SNI 就是落点值本身
+			if h.Routes[i].OriginID == 0 {
+				fillCustomOriginSNI(&h.Routes[i].Kind, &h.Routes[i].Value, &h.Routes[i].SNI)
+			}
 		}
 		return tx.Session(&gorm.Session{FullSaveAssociations: false}).
 			Clauses(clause.OnConflict{UpdateAll: true}).

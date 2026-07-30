@@ -6,7 +6,11 @@ export const queryKeys = {
   hostnamesAll: () => ["config", "hostnames"] as const,
   hostname: (id: number) => ["config", "hostname", id] as const,
   origins: () => ["config", "origins"] as const,
+  // 落在 origins 前缀下: 回源一改就跟着重新检测, 不用手动失效两把 key
+  originDns: () => ["config", "origins", "dns"] as const,
   credentials: () => ["config", "credentials"] as const,
+  // credentialId 传 0 表示不限定凭据, 后端聚合全部 CF 账号可见的 zone
+  cfZones: (credentialId: number) => ["discover", "cf-zones", credentialId] as const,
   plan: (id: number) => ["plan", "detail", id] as const,
   report: (hostnameId: number) => ["plan", "report", hostnameId] as const,
 };

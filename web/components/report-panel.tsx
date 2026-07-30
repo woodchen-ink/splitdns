@@ -1,6 +1,6 @@
 "use client";
 
-import type { HostnameReport } from "@/lib/types";
+import type { CustomHostnameState, HostnameReport } from "@/lib/types";
 import { LevelBadge } from "@/components/level-badge";
 import { Badge } from "@/components/ui/badge";
 
@@ -53,10 +53,13 @@ export function ReportPanel({ report }: { report: HostnameReport }) {
               value={`主机名 ${snap.customHostname.status} · 证书 ${snap.customHostname.sslStatus} · ${snap.customHostname.certAuthority || "未知 CA"}`}
             />
             {snap.customHostname.customOrigin && (
-              <Row
-                label="自定义源"
-                value={`${snap.customHostname.customOrigin} (SNI ${snap.customHostname.customOriginSni || "同名"})`}
-              />
+              <>
+                <Row
+                  label="自定义源"
+                  value={`${snap.customHostname.customOrigin} (SNI ${snap.customHostname.customOriginSni || "同名"})`}
+                />
+                <Row label="自定义源解析" value={originRecordText(snap.customHostname)} />
+              </>
             )}
           </>
         )}
@@ -100,6 +103,19 @@ export function ReportPanel({ report }: { report: HostnameReport }) {
       )}
     </section>
   );
+}
+
+// originRecordText 把自定义源那条解析记录渲染成一行。
+// 没查过与查了没有必须说成两句话: 前者只是记录不在这个区里, 后者是回源一定失败
+function originRecordText(ch: CustomHostnameState): string {
+  const rec = ch.customOriginRecord;
+  if (!rec?.checked) {
+    return `未检测 (这条记录不在 SaaS 区里, 或这轮没读到); 需自行确认 ${ch.customOrigin} 是本账号 DNS 里的橙云记录`;
+  }
+  if (!rec.found) {
+    return "CF 上没有这条记录, 回源会直接失败";
+  }
+  return `${rec.type} → ${rec.content} (${rec.proxied ? "橙云" : "灰云, 回源会直接失败"})`;
 }
 
 function Row({ label, value }: { label: string; value: string }) {

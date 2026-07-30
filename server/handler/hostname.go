@@ -49,10 +49,7 @@ func SaveHostname(w http.ResponseWriter, r *http.Request) {
 		resputil.Fail(w, 400, "访问域名不能为空")
 		return
 	}
-	if h.CFCredentialID == 0 {
-		resputil.Fail(w, 400, "要先选一份 Cloudflare 凭据, 父区靠它推导")
-		return
-	}
+	// 不校验 CF 凭据: 留空时由 service 按访问域名反查出该用哪个账号
 	if err := service.SaveHostname(r.Context(), &h); err != nil {
 		resputil.Fail(w, 500, err.Error())
 		return

@@ -27,3 +27,12 @@ func normalizeName(s string) string {
 func sameName(a, b string) bool {
 	return normalizeName(a) == normalizeName(b)
 }
+
+// inZone 判定主机名是否归某个区管辖, 区顶点本身也算。
+func inZone(fqdn, zone string) bool {
+	f, z := normalizeName(fqdn), normalizeName(zone)
+	if f == "" || z == "" {
+		return false
+	}
+	return f == z || strings.HasSuffix(f, "."+z)
+}

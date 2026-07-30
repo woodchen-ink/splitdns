@@ -5,50 +5,121 @@ import (
 
 	"github.com/woodchen-ink/splitdns/server/database"
 	"github.com/woodchen-ink/splitdns/server/model"
+	"gorm.io/gorm"
 )
 
-// CreatePlan 为某个访问域名生成一条流程。kind 决定是配置还是拆除, 两者互不干扰:
+// CreatePlan 为某个访问域名取出 (或首次生成) 一条流程。kind 决定是配置还是拆除, 两者互不干扰:
 // 同一个域名可以同时挂着一条配置流程和一条拆除流程, 各按各的步骤走。
-// 同类型已有未完成流程时直接复用, 避免并行两套步骤互相打架。
+//
+// 同类型只留一条, 已有的一律复用并把步骤对齐到当前配置, 不重建。
 func CreatePlan(hostnameID uint, kind string) (*model.Plan, error) {
 	h, err := HostnameByID(hostnameID)
 	if err != nil {
 		return nil, err
 	}
 
-	var steps []model.Step
+	var want []model.Step
 	switch kind {
 	case model.PlanSetup:
-		steps = buildSteps(*h)
+		want = buildSteps(*h)
 	case model.PlanTeardown:
-		steps = buildTeardownSteps(*h)
+		want = buildTeardownSteps(*h)
 	default:
 		return nil, fmt.Errorf("未知的流程类型 %q", kind)
 	}
 
-	// 用 Find 而不是 First: "还没有流程"是最常见的正常路径,
-	// First 会把它当成 ErrRecordNotFound 记一条错误日志, 纯噪音
-	var existing []model.Plan
-	q := database.DB.Preload("Steps").
-		Where("hostname_id = ? AND status = ?", hostnameID, "running")
+	existing, err := latestPlan(hostnameID, kind)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		if err := syncSteps(existing, want); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
+
+	plan := model.Plan{HostnameID: hostnameID, Kind: kind, Status: model.PlanRunning, Steps: want}
+	if err := database.DB.Create(&plan).Error; err != nil {
+		return nil, fmt.Errorf("创建流程失败: %w", err)
+	}
+	return &plan, nil
+}
+
+// latestPlan 取该域名这一类型下最近的一条流程, 没有则返回 nil。
+//
+// 不限定"还在跑的": 走完最后一步流程就变成 done, 再按 running 找必然落空, 于是又建一条全新的,
+// 用户手动确认过的步骤全部回到未开始。能自动验证的步骤会被下一轮巡检立刻翻回完成,
+// 所以看起来就是"只有程序验不了的那一步反复退回去"。
+func latestPlan(hostnameID uint, kind string) (*model.Plan, error) {
+	q := database.DB.Preload("Steps").Where("hostname_id = ?", hostnameID)
 	if kind == model.PlanSetup {
 		// 加上 kind 这一列之前建的流程都是配置流程, 值是空串
 		q = q.Where("kind IN ?", []string{model.PlanSetup, ""})
 	} else {
 		q = q.Where("kind = ?", kind)
 	}
-	if err := q.Limit(1).Find(&existing).Error; err != nil {
+	// 用 Find 而不是 First: "还没有流程"是最常见的正常路径,
+	// First 会把它当成 ErrRecordNotFound 记一条错误日志, 纯噪音
+	var found []model.Plan
+	if err := q.Order("id DESC").Limit(1).Find(&found).Error; err != nil {
 		return nil, fmt.Errorf("查询已有流程失败: %w", err)
 	}
-	if len(existing) > 0 {
-		return &existing[0], nil
+	if len(found) == 0 {
+		return nil, nil
 	}
+	return &found[0], nil
+}
 
-	plan := model.Plan{HostnameID: hostnameID, Kind: kind, Status: "running", Steps: steps}
-	if err := database.DB.Create(&plan).Error; err != nil {
-		return nil, fmt.Errorf("创建流程失败: %w", err)
+// syncSteps 把已有流程的步骤对齐到当前配置。
+//
+// 步骤清单是域名配置的投影: 配上 SaaS 区就该多出那几步, 撤掉自定义源就该少一步。
+// 复用流程如果不对齐, 改完配置的域名会一直挂着一份过时的步骤单。
+// 对齐只覆盖模板信息 (顺序 / 标题 / 指令 / 执行方式 / 能否自动验证), 状态与时间戳一律保留 ——
+// 那些是用户已经做过的事, 不能因为进一次页面就清零。
+func syncSteps(plan *model.Plan, want []model.Step) error {
+	have := make(map[string]*model.Step, len(plan.Steps))
+	for i := range plan.Steps {
+		have[plan.Steps[i].Key] = &plan.Steps[i]
 	}
-	return &plan, nil
+	wanted := make(map[string]bool, len(want))
+	merged := make([]model.Step, 0, len(want))
+
+	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		for _, w := range want {
+			wanted[w.Key] = true
+			old, ok := have[w.Key]
+			if !ok {
+				w.PlanID = plan.ID
+				if err := tx.Create(&w).Error; err != nil {
+					return err
+				}
+				merged = append(merged, w)
+				continue
+			}
+			old.Seq, old.Title, old.Instruction = w.Seq, w.Title, w.Instruction
+			old.Mode, old.ETASeconds, old.Verifiable = w.Mode, w.ETASeconds, w.Verifiable
+			if err := tx.Save(old).Error; err != nil {
+				return err
+			}
+			merged = append(merged, *old)
+		}
+		// 不再适用的步骤直接删: 留着它做过与否都没有意义, 还会一直卡着流程收尾
+		for _, s := range plan.Steps {
+			if wanted[s.Key] {
+				continue
+			}
+			if err := tx.Delete(&model.Step{}, s.ID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("对齐流程步骤失败: %w", err)
+	}
+	plan.Steps = merged
+	return nil
 }
 
 // buildSteps 按域名的实际配置生成步骤序列。

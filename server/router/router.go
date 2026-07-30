@@ -28,6 +28,8 @@ func New(cfg *config.Config) http.Handler {
 
 	api.HandleFunc("GET /api/origins", handler.ListOrigins)
 	api.HandleFunc("POST /api/origins", handler.SaveOrigin)
+	api.HandleFunc("GET /api/origins/dns", handler.InspectOriginDNS)
+	api.HandleFunc("POST /api/origins/{id}/dns", handler.CreateOriginRecord)
 	api.HandleFunc("DELETE /api/origins/{id}", handler.DeleteOrigin)
 
 	api.HandleFunc("GET /api/credentials", handler.ListCredentials)

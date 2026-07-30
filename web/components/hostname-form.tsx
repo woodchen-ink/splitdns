@@ -1,15 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
-import type { Credential, Hostname, Origin, Route } from "@/lib/types";
+import type { CFZone, Credential, Hostname, Origin, Route } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { HostPicker } from "@/components/host-picker";
 import {
   Select,
   SelectContent,
@@ -68,6 +69,8 @@ export function HostnameForm({
   onSaved?: (saved: Hostname) => void;
 }) {
   const qc = useQueryClient();
+  // 后缀在 CF 里找不到时退回手打整串。已有域名进来先按"能不能匹配上"定一次, 之后由用户自己切
+  const [manualHost, setManualHost] = useState(false);
   const [draft, setDraft] = useState<Draft>(() =>
     initial
       ? {
@@ -93,47 +96,64 @@ export function HostnameForm({
     queryFn: () => api.get<Credential[] | null>("/api/credentials"),
   });
 
-  const cfCreds = (credentials ?? []).filter((c) => c.kind === "cloudflare");
   const dpCreds = (credentials ?? []).filter((c) => c.kind === "dnspod");
 
   // 只有一份凭据时没什么可挑的, 直接当成已选。
   // 用派生值而不是在 effect 里回写 state: 后者要么和 lint 规则打架, 要么会覆盖用户的手动选择。
-  const cfCredentialId = draft.cfCredentialId || (cfCreds.length === 1 ? cfCreds[0].id : 0);
   const dnspodCredentialId =
     draft.dnspodCredentialId || (dpCreds.length === 1 ? dpCreds[0].id : 0);
 
-  // 平台上已有的 zone 与域名直接读出来供选, 不用手打
+  // CF 上可见的 zone 与它归哪个账号管一次读齐, 不限定凭据 —— 域名落在哪个账号下是客观事实,
+  // 选完后缀账号就定了, 不必让用户先挑凭据再挑区
   const { data: cfZones } = useQuery({
-    queryKey: ["discover", "cf-zones", cfCredentialId],
-    queryFn: () => api.get<string[] | null>(`/api/discover/cf-zones?credentialId=${cfCredentialId}`),
-    enabled: cfCredentialId > 0,
+    queryKey: queryKeys.cfZones(0),
+    queryFn: () => api.get<CFZone[] | null>("/api/discover/cf-zones"),
     staleTime: 5 * 60_000,
   });
-  const { data: dpDomains } = useQuery({
-    queryKey: ["discover", "dnspod-domains", dnspodCredentialId],
-    queryFn: () =>
-      api.get<string[] | null>(`/api/discover/dnspod-domains?credentialId=${dnspodCredentialId}`),
-    enabled: dnspodCredentialId > 0,
-    staleTime: 5 * 60_000,
-  });
+  const zoneList = cfZones ?? [];
+  const zoneNames = zoneList.map((z) => z.zone);
+  const accountOf = (zone: string) => zoneList.find((z) => z.zone === zone);
 
-  // 父区由后端从可见 zone 里推导, 前端只拿来做预览 —— 推导逻辑只保留一份
+  // 每敲一个字都去问一次后端太浪费 (一份凭据一次 CF 往返), 停手再问
+  const [probeHost, setProbeHost] = useState(draft.hostname);
+  useEffect(() => {
+    const timer = setTimeout(() => setProbeHost(draft.hostname), 400);
+    return () => clearTimeout(timer);
+  }, [draft.hostname]);
+
+  // 父区由后端从可见 zone 里推导 (顺带带出该用哪份凭据), 前端只拿来展示 —— 推导逻辑只保留一份
   const { data: derivedParent } = useQuery({
-    queryKey: ["discover", "parent-zone", cfCredentialId, draft.hostname],
+    queryKey: ["discover", "parent-zone", probeHost],
     queryFn: () =>
-      api.get<{ parentZone: string }>(
-        `/api/discover/parent-zone?credentialId=${cfCredentialId}` +
-          `&hostname=${encodeURIComponent(draft.hostname)}`,
+      api.get<{ parentZone: string; credentialId: number; credentialName: string }>(
+        `/api/discover/parent-zone?hostname=${encodeURIComponent(probeHost)}`,
       ),
-    enabled: cfCredentialId > 0 && draft.hostname.includes("."),
+    enabled: probeHost.includes("."),
     retry: false,
     staleTime: 60_000,
   });
   const parentZone = derivedParent?.parentZone ?? "";
+  // 父区归哪个账号是当前这个域名的客观事实, 优先用它; 推导不出来 (还没返回 / Token 看不到) 才退回存量值,
+  // 反过来的话把域名改到另一个账号下的区, 凭据还留在旧账号上
+  const cfCredentialId = derivedParent?.credentialId || draft.cfCredentialId || 0;
+
+  // SaaS 区在别的账号下时要单独记一份凭据; 与父区同一个账号就留 0, 让后端回落到父区凭据。
+  // zone 列表还没到时保持存量值不动 —— 这时"查不到账号"只说明还没读到, 不是真的同账号
+  const saasAccount = accountOf(draft.saasZone);
+  const saasCredentialId = saasAccount
+    ? saasAccount.credentialId === cfCredentialId
+      ? 0
+      : saasAccount.credentialId
+    : draft.saasCredentialId;
 
   const save = useMutation({
     mutationFn: () =>
-      api.post<Hostname>("/api/hostnames", { ...draft, cfCredentialId, dnspodCredentialId }),
+      api.post<Hostname>("/api/hostnames", {
+        ...draft,
+        cfCredentialId,
+        saasCredentialId,
+        dnspodCredentialId,
+      }),
     onSuccess: (saved) => {
       toast.success("已保存");
       qc.invalidateQueries({ queryKey: ["config"] });
@@ -164,25 +184,28 @@ export function HostnameForm({
           label="访问域名"
           hint={
             parentZone
-              ? `父区自动推导为 ${parentZone}`
-              : "对外提供服务的主机名, 如 img.example.com; 父区由它自动推导"
+              ? `父区 ${parentZone}${derivedParent?.credentialName ? ` · 账号 ${derivedParent.credentialName}` : ""} (自动匹配)`
+              : "对外提供服务的主机名; 选好后缀只用打前面那一截, 父区和 CF 账号都自动定"
           }
         >
-          <Input
+          <HostPicker
             value={draft.hostname}
-            onChange={(e) => set("hostname", e.target.value)}
-            placeholder="img.example.com"
+            onChange={(v) => set("hostname", v)}
+            zones={zoneNames}
+            manual={manualHost}
+            onManualChange={setManualHost}
+            prefixPlaceholder="img"
             required
           />
         </Field>
-        <Field label="Cloudflare 凭据" hint="父区和 SaaS 区都用它">
-          <CredSelect
-            value={cfCredentialId}
-            options={cfCreds}
-            onChange={(v) => set("cfCredentialId", v)}
-          />
-        </Field>
-        <Field label="SaaS 区" hint="承载自定义主机名的另一个 CF zone; 不走 CF 就选「不使用」">
+        <Field
+          label="SaaS 区"
+          hint={
+            saasCredentialId
+              ? `在另一个账号下 (${saasAccount?.credentialName}), 已单独记下它的凭据`
+              : "承载自定义主机名的另一个 CF zone; 不走 CF 就选「不使用」"
+          }
+        >
           <Select
             value={draft.saasZone || "__none__"}
             onValueChange={(v) => set("saasZone", v === "__none__" ? "" : (v ?? ""))}
@@ -195,7 +218,7 @@ export function HostnameForm({
             <SelectContent>
               <SelectItem value="__none__">不使用 CF for SaaS</SelectItem>
               {/* 父区排除掉: 自定义主机名不能是 SaaS 区自己的子域 */}
-              {(cfZones ?? [])
+              {zoneNames
                 .filter((z) => z !== parentZone)
                 .map((z) => (
                   <SelectItem key={z} value={z}>
@@ -339,7 +362,7 @@ export function HostnameForm({
                     <Input
                       value={route.address}
                       onChange={(e) => setRoute(i, { address: e.target.value })}
-                      placeholder="仅当要程序代建那条橙云记录时才填"
+                      placeholder="要程序代建橙云记录时才填, 双栈用逗号分隔"
                       className="mt-1"
                     />
                   </div>
@@ -363,16 +386,6 @@ export function HostnameForm({
         <datalist id="dnspod-lines">
           {COMMON_LINES.map((l) => (
             <option key={l} value={l} />
-          ))}
-        </datalist>
-        <datalist id="cf-zones">
-          {(cfZones ?? []).map((z) => (
-            <option key={z} value={z} />
-          ))}
-        </datalist>
-        <datalist id="dnspod-domains">
-          {(dpDomains ?? []).map((d) => (
-            <option key={d} value={d} />
           ))}
         </datalist>
       </div>

@@ -29,9 +29,9 @@ type Origin struct {
 	Kind string `gorm:"column:kind;size:32;index;not null" json:"kind"`
 	// Value 落点值: 主机名或 IP
 	Value string `gorm:"column:value;size:256;not null" json:"value"`
-	// Address 落点主机名背后的源站 IP。仅当程序需要替你在 CF SaaS 区建那条橙云记录时才用到;
-	// 记录已经存在时留空即可
-	Address string `gorm:"column:address;size:64" json:"address"`
+	// Address 落点主机名背后的源站 IP, 程序靠它代建那条橙云记录 (记录已经存在时留空即可)。
+	// 双栈落点用逗号 / 空白分隔填多个: IPv4 建 A、IPv6 建 AAAA, 各一条
+	Address string `gorm:"column:address;size:128" json:"address"`
 	// SNI 回源 TLS 握手使用的 SNI, 仅自定义源服务器需要;
 	// 填了就意味着源站上必须存在能路由该名字的 router/vhost, 否则回源 403
 	SNI string `gorm:"column:sni;size:256" json:"sni"`

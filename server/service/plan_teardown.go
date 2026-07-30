@@ -67,7 +67,9 @@ func buildTeardownSteps(h model.Hostname) []model.Step {
 			Key:   "teardown.saas_custom_hostname",
 			Title: "删掉 SaaS 区的自定义主机名",
 			Instruction: fmt.Sprintf(
-				"到 CF 的 %s 区 → SSL/TLS → 自定义主机名, 删掉 %s。CF 会把它的证书一并吊销。",
+				"到 CF 的 %s 区 → SSL/TLS → 自定义主机名, 删掉 %s。CF 会把它的证书一并吊销。\n"+
+					"本工具当初为它建的那条落点记录会一并清掉; 但区里还有别的自定义主机名指着同一个源服务器、"+
+					"或者它就是该区的回退源时不动 —— 删了会连累别人。",
 				h.SaaSZone, h.Hostname),
 			ETASeconds: 30,
 		})

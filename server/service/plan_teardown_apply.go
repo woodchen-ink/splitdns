@@ -161,7 +161,8 @@ func remainingRecordLines(ctx context.Context, dp *dnspod.Client, zone string) [
 	return lines
 }
 
-// teardownCustomHostname 删掉 SaaS 区里的自定义主机名, 证书由 CF 一并吊销。
+// teardownCustomHostname 删掉 SaaS 区里的自定义主机名, 证书由 CF 一并吊销;
+// 本工具专为它建的那条落点记录一并清掉。
 func teardownCustomHostname(ctx context.Context, h model.Hostname, confirm bool) (string, error) {
 	cf, zoneID, err := saasZone(ctx, h)
 	if err != nil {
@@ -174,17 +175,67 @@ func teardownCustomHostname(ctx context.Context, h model.Hostname, confirm bool)
 	if existing == nil {
 		return "SaaS 区里已经没有这个自定义主机名了", nil
 	}
+	doomed, err := customOriginLeftovers(ctx, cf, zoneID, existing)
+	if err != nil {
+		return "", err
+	}
 
 	if !confirm {
+		lines := []string{fmt.Sprintf("自定义主机名 %s (主机名状态 %s / 证书状态 %s)",
+			existing.Hostname, orNone(existing.Status), orNone(existing.SSL.Status))}
 		return "", needConfirm(
 			fmt.Sprintf("将从 %s 删除自定义主机名, 证书会一并吊销", h.SaaSZone),
-			[]string{fmt.Sprintf("%s (主机名状态 %s / 证书状态 %s)",
-				existing.Hostname, orNone(existing.Status), orNone(existing.SSL.Status))})
+			append(lines, cfRecordLines(doomed)...))
 	}
 	if err := cf.DeleteCustomHostname(ctx, zoneID, existing.ID); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("已删掉自定义主机名 %s, 证书一并吊销", h.Hostname), nil
+	for _, r := range doomed {
+		if err := cf.DeleteRecord(ctx, zoneID, r.ID); err != nil {
+			return "", fmt.Errorf("自定义主机名已删掉, 但删记录 %s 失败: %w", r.Name, err)
+		}
+	}
+	msg := fmt.Sprintf("已删掉自定义主机名 %s, 证书一并吊销", h.Hostname)
+	if len(doomed) > 0 {
+		msg += fmt.Sprintf(", 并删掉本工具为它建的 %d 条落点记录", len(doomed))
+	}
+	return msg, nil
+}
+
+// customOriginLeftovers 挑出"只为这个自定义主机名建的"落点记录。
+//
+// 三道闸全过才算数: 得是本工具建的 (认备注前缀), 区里不能有别的自定义主机名还指着同一个源服务器,
+// 也不能是该区的回退源。后两者删掉会连累别人, 宁可留着让人自己判断 —— 少删一条只是残留,
+// 多删一条是别人的线上流量。任何一路读不到就直接不删: 拉不到 ≠ 没有。
+func customOriginLeftovers(ctx context.Context, cf *cloudflare.Client, zoneID string, ch *cloudflare.CustomHostname) ([]cloudflare.DNSRecord, error) {
+	if ch.CustomOriginServer == "" {
+		return nil, nil
+	}
+	hosts, err := cf.ListCustomHostnames(ctx, zoneID)
+	if err != nil {
+		return nil, err
+	}
+	for _, other := range hosts {
+		if other.ID != ch.ID && sameName(other.CustomOriginServer, ch.CustomOriginServer) {
+			return nil, nil
+		}
+	}
+	fo, err := cf.GetFallbackOrigin(ctx, zoneID)
+	if err != nil || sameName(fo.Origin, ch.CustomOriginServer) {
+		return nil, nil
+	}
+
+	mine, err := cf.RecordsByComment(ctx, zoneID, cfCommentPrefix)
+	if err != nil {
+		return nil, err
+	}
+	var out []cloudflare.DNSRecord
+	for _, r := range mine {
+		if sameName(r.Name, ch.CustomOriginServer) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // teardownFallbackOrigin 清掉 SaaS 区的回退源, 顺带删掉当初由本工具建的那条橙云记录。
