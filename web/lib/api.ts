@@ -2,6 +2,8 @@
 // 让调用方只处理 data, 错误统一走 TanStack Query 的 error 分支。
 
 export const CODE_NEED_CONFIRM = 4090;
+// 未登录。业务码与 HTTP 状态一致, 由 AuthGate 接住并切回登录页, 不当成普通接口失败弹 toast
+export const CODE_NEED_LOGIN = 401;
 
 export class ApiError extends Error {
   code: number;

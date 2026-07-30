@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,7 +33,37 @@ func ExportDatabase() (path string, cleanup func(), err error) {
 		cleanup()
 		return "", nil, fmt.Errorf("导出数据库失败: %w", err)
 	}
+	if err := stripAccount(target); err != nil {
+		cleanup()
+		return "", nil, err
+	}
 	return target, cleanup, nil
+}
+
+// stripAccount 把导出副本里的登录态删掉。
+//
+// 备份是业务数据, 不是身份: 库里那份 refresh_token 拿到手就能以本人身份调 CZL Connect,
+// 而备份文件是拿来换机器、发给人看的。平台密钥留着 (换机器就是要它们), 登录态换台机器重登一次即可。
+func stripAccount(path string) error {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return fmt.Errorf("打开导出副本失败: %w", err)
+	}
+	defer db.Close()
+
+	// 早于登录功能的库里没有这张表, 那种情况本来就没什么可删
+	var name string
+	err = db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='account'").Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("检查导出副本失败: %w", err)
+	}
+	if _, err := db.Exec("DELETE FROM account"); err != nil {
+		return fmt.Errorf("清除导出副本里的登录态失败: %w", err)
+	}
+	return nil
 }
 
 // ExportFileName 生成带日期的下载文件名, 便于区分不同时间导出的备份。

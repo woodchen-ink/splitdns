@@ -1,6 +1,8 @@
 // query key 统一在这里定义, 组件内不写字面量, 失效时才不会漏。
 
 export const queryKeys = {
+  // 登录态独立成一支: 退出登录要清掉 config / discover / plan 下的全部缓存, 唯独它自己得留着
+  session: () => ["auth", "session"] as const,
   hostnames: (keyword: string) => ["config", "hostnames", keyword] as const,
   // 前缀 key: 域名增删后让所有关键字下的列表一起失效
   hostnamesAll: () => ["config", "hostnames"] as const,

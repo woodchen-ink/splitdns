@@ -11,9 +11,14 @@ import (
 )
 
 // New 组装路由: /api 走业务处理器, 其余交给 Next.js 静态导出产物。
-// 没有鉴权中间件 —— 桌面版不监听端口, 请求只可能来自自己的 webview。
 func New(cfg *config.Config) http.Handler {
 	api := http.NewServeMux()
+
+	api.HandleFunc("GET /api/auth/session", handler.GetSession)
+	api.HandleFunc("POST /api/auth/login", handler.StartLogin)
+	api.HandleFunc("POST /api/auth/callback", handler.AuthCallback)
+	api.HandleFunc("POST /api/auth/refresh", handler.RefreshSession)
+	api.HandleFunc("POST /api/auth/logout", handler.Logout)
 
 	api.HandleFunc("GET /api/hostnames", handler.ListHostnames)
 	api.HandleFunc("POST /api/hostnames", handler.SaveHostname)
@@ -57,7 +62,7 @@ func New(cfg *config.Config) http.Handler {
 	})
 
 	root := http.NewServeMux()
-	root.Handle("/api/", api)
+	root.Handle("/api/", requireLogin(api))
 
 	// 静态产物缺失时不让整个程序起不来: API 仍然可用, 页面路由给出明确提示
 	static, err := nextstatic.New(nextstatic.Config{Root: cfg.StaticRoot, TrailingSlash: true})

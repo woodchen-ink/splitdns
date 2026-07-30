@@ -13,16 +13,35 @@ type Config struct {
 	Timezone string
 	// StaticRoot Next.js export 产物目录
 	StaticRoot string
+	// OAuth CZL Connect 接入参数
+	OAuth OAuthConfig
+}
+
+// OAuthConfig 是这个应用在 CZL Connect 后台登记的接入参数。
+//
+// 这里没有 client_secret: 后台把客户端认证方式登记成了 Public Client,
+// 换令牌靠 PKCE。桌面程序里的任何"密钥"用户都能从二进制里挖出来, 那不叫密钥。
+type OAuthConfig struct {
+	ClientID    string
+	RedirectURI string
+	Scope       string
 }
 
 // New 构造配置。
 // 这个工具只有桌面版一种形态: 不监听端口、请求由 Wails 直接交给 handler,
-// 所以既没有端口与监听地址, 也不需要鉴权相关的配置项。
+// 因此没有端口与监听地址; 登录态是本机的, 也不涉及会话密钥之类的服务端配置。
 func New(dataDir, staticRoot string) *Config {
 	return &Config{
 		DatabasePath: filepath.Join(dataDir, "splitdns.db"),
 		Timezone:     envStr("TZ", "Asia/Shanghai"),
 		StaticRoot:   staticRoot,
+		OAuth: OAuthConfig{
+			ClientID: envStr("CZL_CLIENT_ID", "client_50469374"),
+			// 回调地址必须与后台登记的完全一致。自定义协议而不是 http 回环端口:
+			// 桌面版一个端口都不监听, 为了收一次回调专门开一个本地监听不划算
+			RedirectURI: envStr("CZL_REDIRECT_URI", "splitdns://callback"),
+			Scope:       envStr("CZL_SCOPE", "read"),
+		},
 	}
 }
 

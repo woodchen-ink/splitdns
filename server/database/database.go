@@ -41,6 +41,7 @@ func Init(path string) error {
 	// 新增 model 必须同步登记到这里, 漏了不会有编译错误, 只会在运行时报 no such table
 	migrate := func() error {
 		return db.AutoMigrate(
+			&model.Account{},
 			&model.Credential{},
 			&model.Origin{},
 			&model.Hostname{},

@@ -15,11 +15,16 @@
   驱动选 `glebarez/sqlite` (纯 Go 实现), 因此不需要 CGO
 - **`server/` 是库不是端**: 它保留端目录的位置与命名, 但没有 `main.go`, 由 `desktop/` 通过 `go.mod` 的
   `replace ../server` 引用。桌面版不是另一个前端, 而是同一套后端的外壳, 复制一份业务代码只会让两边漂移
-- **不监听端口、没有鉴权**: Wails 把 webview 的请求直接交给 handler, 没有网络入口也就没有鉴权的必要;
+- **不监听端口**: Wails 把 webview 的请求直接交给 handler, 没有网络入口。
   前端调的还是 `/api`, 与普通 Web 应用形态一致
+- **登录不是会话而是账号绑定**: 没有网络入口, 也就没有会话 Cookie / CSRF 这一套。
+  `/api` 的门禁读的是本地库里那一行登录态 (`service.IsLoggedIn`), 拦的是"这台机器还没绑账号",
+  不是"这个请求来路不明"
 
 ## 数据模型
 
+- `account` — 当前登录的 CZL Connect 账号, 单行表 (主键恒为 `model.AccountRowID`)。
+  令牌字段 `json:"-"`, 前端只拿得到昵称头像那些资料
 - `credential` — 平台 API 凭据 (Cloudflare / 腾讯云 DNSPod)。密钥字段 `json:"-"`, 只写不读;
   **写入必须走 handler 里单独的入参结构** —— `json:"-"` 是双向的, 靠 model tag 会把请求体里的密钥一起丢掉
 - `origin` — 回源目标。一个回源可被多个访问域名共用, 改一处全部跟着变。
@@ -42,6 +47,18 @@
 
 ## 核心行为
 
+- **登录** (`server/pkg/czlconnect` + `service/auth*.go` + `desktop/oauth.go`): CZL Connect 的
+  Authorization Code + PKCE, Public Client 没有 `client_secret` (桌面程序里的密钥用户都挖得出来)。
+  **强制登录**: 没绑账号时 `/api` 全线 401 (豁免 `/api/auth/`、`/api/healthz`、`/api/open`),
+  前端 `AuthGate` 同步只渲染登录页。两层都要有 —— 只拦前端, 开个 devtools 就能拿未登录状态去改生产 DNS;
+  只拦后端, 界面会变成一片报错。
+  授权页走**系统浏览器**而不是自家 webview: 要复用浏览器里已有的 CZL Connect 登录态,
+  而且第三方登录页放进 webview, 用户没有地址栏可以核对域名
+- **令牌刷新** (`service/auth_token.go`): 剩余有效期不足 `refreshSkew` 就先刷, 由 `tokenMu` 串行化 ——
+  并发拿同一个 `refresh_token` 换两次, 服务端一旦轮换就把自己刷废了。
+  **只有 `invalid_grant` 才清本地登录态**: 网络不通 / 5xx 只是这次没刷上, 当成"要重新登录"会让人断个网就被自己的
+  工具锁在门外; 那类失败进冷却期 (`refreshRetryGap`), 否则前端轮询会把它变成对授权服务器的连打。
+  服务端不轮换时不回 `refresh_token`, **拿空值覆盖等于自己清了登录态**, 要保留旧值
 - **巡检** (`service/inspect.go` + `check*.go`): 一次拉齐三个平台的实际状态, 再按规则判定。
   任何一处拉取失败都转成 Finding, 不让整个报告消失; 同时记进 `Snapshot.FetchErrors`,
   **判定层必须区分"确实没有"和"根本没读到"** —— 两者在快照里长得一模一样, 混淆会让拆除流程谎报清干净了
@@ -75,7 +92,10 @@
   想留着 DNSPod 域名、回退源还有别人在用, 都是合理的"这步不做"
 - **验证退回**: 曾经通过的步骤在巡检发现线上被改动后会退回 `waiting`, 不会一直显示完成
 - **数据搬家** (`service/backup.go`): 导出走 `VACUUM INTO` 取一致性快照; 导入前校验文件头与必备表,
-  替换前另存带时间戳的备份, 写入失败自动回滚
+  替换前另存带时间戳的备份, 写入失败自动回滚。
+  **导出副本里的 `account` 表会被清掉** (`stripAccount`): 备份是业务数据不是身份, 那份 `refresh_token`
+  拿到手就能以本人身份调 CZL Connect。平台密钥保留 (换机器就是要它们), 登录换台机器重登一次。
+  同理导入别人的库之后本机会变成未登录 —— `importTables` 不要求有 `account`, 老备份照样导得进来
 
 ## 平台上踩过的坑 (改动相关代码前先看这里)
 
@@ -93,6 +113,19 @@
 - **本工具写进 CF 的记录都带 `splitdns` 开头的备注**: 拆除时靠 `comment.startswith` 认回自己的痕迹,
   名字和类型都不稳定, 只有备注是。新增写记录的地方备注也必须以 `cfCommentPrefix` 开头
 - **WebView2 里 multipart 上传的文件部分是空的**: 上传走裸请求体, 别用 `FormData`
+- **CZL Connect 只支持 PKCE 的 `S256`**, `plain` 发过去会被拒
+- **授权回跳走 `splitdns://callback` 自定义协议**, 落点是桌面壳而不是某个 HTTP 接口。
+  正常通路是 Wails 的单实例锁: 系统拉起第二个进程, 把回调地址转交给已经开着的那个 ——
+  **PKCE 的 `verifier` 只在发起授权那个进程的内存里**, 转交不到就换不出令牌 (冷启动收到回调必然如此,
+  提示用户重新发起即可, 不要为此把 verifier 落库)。
+  协议注册有三处: NSIS 装机时 (`wails.json` 的 `info.protocols`)、macOS 的 `CFBundleURLTypes` (同一份配置生成)、
+  以及每次启动时写 HKCU (`desktop/protocol_windows.go`) —— 最后这处是给绿色版和"换过目录"准备的。
+  三处写的描述都得是 Windows 惯例的 `URL:splitdns Protocol`, 且**只能用 ASCII**:
+  它会被塞进 NSIS 脚本, makensis 不按 UTF-8 读的话中文就成乱码。
+  **`build/windows/installer/*.nsh` 生成一次之后 Wails 就不再覆盖了**, 改 `wails.json` 的 `protocols` 必须同步手改那份脚本。
+  注意 `wails dev` 也会写 HKCU, 会把协议指到临时构建产物上, 跑一次正式程序即可覆盖回来
+- **任何一处协议都可能不通** (安全软件拦、Linux 没有发行形态): 登录页始终留着"手动粘贴回调地址"那条路
+  (`POST /api/auth/callback`), 别把它当成调试功能删掉
 
 ## 前端要点
 
@@ -103,6 +136,12 @@
   `Button` 没有 `asChild`, 用 `buttonVariants()` 给 `Link` 加 class
 - **静态导出的动态路由不能用 `useParams`**: 真实 ID 由 Go 映射到 `_` 占位符模板, 那份模板构建期的参数字面量就是 `_`;
   要从 `usePathname()` 解析, 且等挂载后再判定
+- **`AuthGate` 包住导航与全部页面**: 未登录时整页只有登录界面, 不给一排点不动的入口。
+  等待授权回跳期间才开轮询 (`waiting` 为真时 1s 一次) —— 授权在应用外面完成, 前端没有任何回调可接;
+  平时一次都不多问。任何接口返回 401 都在 `providers.tsx` 的 cache `onError` 里统一失效登录态,
+  不要在各个调用点各判一次
+- **退出登录不能 `qc.clear()`**: 它连登录态那条查询一起从缓存里摘掉, 挂在上面的闸门就再也等不到下一次结果,
+  界面卡在业务页的一片 401 上。要清就用 `predicate` 挑掉 `auth` 之外的那些, 再把登录态就地写成未登录
 
 ## 命令
 

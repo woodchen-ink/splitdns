@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { UserMenu } from "@/components/user-menu";
 
 const NAV = [
   { href: "/", label: "域名" },
@@ -43,6 +44,7 @@ export function AppHeader() {
             );
           })}
         </nav>
+        <UserMenu />
       </div>
     </header>
   );

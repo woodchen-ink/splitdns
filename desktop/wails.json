@@ -8,6 +8,13 @@
   "info": {
     "productName": "splitdns",
     "productVersion": "1.0.0",
-    "comments": "分线路解析配置与巡检"
+    "comments": "分线路解析配置与巡检",
+    "protocols": [
+      {
+        "scheme": "splitdns",
+        "description": "URL:splitdns Protocol",
+        "role": "Viewer"
+      }
+    ]
   }
 }

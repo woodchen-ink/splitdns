@@ -19,7 +19,14 @@ Next.js 16 App Router + `output: 'export'` 静态导出, Tailwind + Shadcn UI + 
 - 数组字段可能是 `null` (Go 空切片的序列化结果), 消费前一律 `?? []`
 - 检查项 `code`、步骤 `key`、回源 `kind` 都是开放式取值, 一律通用渲染 + 兜底, 不为每个值写分支
 - 顶部导航在 `app/layout.tsx` 挂一次, 路由切换不重挂载; 主壳锁视口高, 只有内容区滚动
+- `components/auth-gate.tsx` 是全站闸门, 连导航一起包在里面: 登录态不是 `active` 就整页换成
+  `login-screen.tsx`。业务码 `401` 表示未登录, 由 `providers.tsx` 的 cache `onError` 统一失效
+  `queryKeys.session()`, 组件里不各判一次
 - 当前 shadcn `Button` 不支持 `asChild`, 需要按钮样式的链接用 `buttonVariants()` 给 `Link` 加 class
+- **字体走 `geist` 包, 不要用 `next/font/google`**: 后者构建时要现拉 fonts.googleapis.com,
+  那个域名在国内连不上, 本地一构建就直接失败 (CI 有网所以只坏本地)。CSS 变量名两者一致, 换回去不会报错、只会构建不了
+- `next.config.ts` 显式钉了 `turbopack.root`: 不写的话 Turbopack 会往上找 lockfile,
+  用户主目录里随便一个 `package-lock.json` 就能把工作区根推到 `C:\Users\xxx`
 
 ## 命令
 

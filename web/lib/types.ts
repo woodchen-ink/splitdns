@@ -197,3 +197,30 @@ export interface PlanView {
   hostname: Hostname;
   report: HostnameReport;
 }
+
+// AuthUser 是 CZL Connect 上的账号资料。令牌不会下发到前端, 这里也没有对应字段
+export interface AuthUser {
+  remoteId: number;
+  username: string;
+  nickname: string;
+  email: string;
+  avatar: string;
+  groups: string[] | null;
+  scope: string;
+  expiresAt: string;
+  loggedInAt: string;
+}
+
+// SessionStatus: guest 没登录过, active 登录有效, expired 令牌被服务端判死需重新授权
+export type SessionStatus = "guest" | "active" | "expired";
+
+export interface Session {
+  status: SessionStatus | string;
+  user: AuthUser | null;
+  // waiting 表示已经跳去浏览器授权、正等着回跳; 前端据此决定要不要轮询
+  waiting: boolean;
+  // loginError 上一次授权回跳失败的原因 —— 回跳发生在应用外面, 只能这样带回界面
+  loginError: string;
+  // tokenError 最近一次刷新令牌失败的原因; 属于暂时没刷上, 不影响继续使用
+  tokenError: string;
+}

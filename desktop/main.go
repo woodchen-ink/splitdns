@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/woodchen-ink/splitdns/server/config"
 	"github.com/woodchen-ink/splitdns/server/initapp"
 	"github.com/woodchen-ink/splitdns/server/router"
@@ -55,6 +57,16 @@ func main() {
 		fatal(logPath, err)
 	}
 
+	// 注册失败不拦启动: 登录页上还留着"手动粘贴回调地址"这条路, 为了一条注册表项
+	// 让整个工具打不开不划算
+	if scheme := callbackScheme(); scheme != "" {
+		if err := registerURLScheme(scheme); err != nil {
+			slog.Warn("注册回调协议失败, 授权回跳将无法自动回到应用", "scheme", scheme, "err", err)
+		}
+	}
+	// 冷启动时系统会把回调地址当命令行参数塞进来
+	callbackURL := callbackFromArgs(os.Args[1:])
+
 	err = wails.Run(&options.App{
 		Title:  "splitdns",
 		Width:  1280,
@@ -62,6 +74,17 @@ func main() {
 		AssetServer: &assetserver.Options{
 			// 不用 Wails 自带的静态服务: 我们的 handler 已经处理好 /api 与 Next 导出产物
 			Handler: router.New(cfg),
+		},
+		OnStartup: onStartup(callbackURL),
+		// 单实例锁是授权回跳的正常通路: 系统拉起的第二个进程只负责把回调地址转交给
+		// 已经开着的这个 —— PKCE 的 verifier 在它内存里, 换不换得到令牌全看这一转交
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId:               "splitdns-single-instance",
+			OnSecondInstanceLaunch: onSecondInstanceLaunch,
+		},
+		Mac: &mac.Options{
+			// macOS 不走命令行参数: 系统把 URL 直接送给正在运行的 app
+			OnUrlOpen: handleAuthCallback,
 		},
 	})
 	if err != nil {

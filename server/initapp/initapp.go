@@ -7,12 +7,19 @@ import (
 	"github.com/woodchen-ink/go-web-utils/timex"
 	"github.com/woodchen-ink/splitdns/server/config"
 	"github.com/woodchen-ink/splitdns/server/database"
+	"github.com/woodchen-ink/splitdns/server/pkg/czlconnect"
+	"github.com/woodchen-ink/splitdns/server/service"
 )
 
-// Init 完成进程级初始化: 结构化日志、业务时区、数据库。
+// Init 完成进程级初始化: 结构化日志、业务时区、CZL Connect 接入参数、数据库。
 // 时区加载失败直接退出, 不静默回退 UTC —— 等待计时和记录时间都依赖它。
 func Init(cfg *config.Config) error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	timex.MustInit(cfg.Timezone)
+	service.InitAuth(czlconnect.Config{
+		ClientID:    cfg.OAuth.ClientID,
+		RedirectURI: cfg.OAuth.RedirectURI,
+		Scope:       cfg.OAuth.Scope,
+	})
 	return database.Init(cfg.DatabasePath)
 }

@@ -9,6 +9,7 @@ replace github.com/woodchen-ink/splitdns/server => ../server
 require (
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/woodchen-ink/splitdns/server v0.0.0
+	golang.org/x/sys v0.30.0
 )
 
 require (
@@ -47,7 +48,6 @@ require (
 	github.com/woodchen-ink/go-web-utils v1.6.1 // indirect
 	golang.org/x/crypto v0.33.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 	gorm.io/gorm v1.31.2 // indirect
 	modernc.org/libc v1.22.5 // indirect
