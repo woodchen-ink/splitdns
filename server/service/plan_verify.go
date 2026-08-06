@@ -246,16 +246,25 @@ func stepSatisfied(key string, h model.Hostname, snap model.Snapshot) (ok bool, 
 	}
 	switch key {
 	case "saas.fallback_origin":
-		if snap.FallbackOriginStatus == "active" {
-			return true, true, ""
+		if snap.FallbackOriginStatus != "active" {
+			return false, true, fmt.Sprintf("回退源状态为 %q, 需要 active", orNone(snap.FallbackOriginStatus))
 		}
-		return false, true, fmt.Sprintf("回退源状态为 %q, 需要 active", orNone(snap.FallbackOriginStatus))
+		// 状态 active 说明这一路读到了, 值不符就是真漂移, 不会把拉取失败当成退回理由
+		if want := fallbackOriginTarget(h); want != nil && want.Value != "" && !sameName(snap.FallbackOrigin, want.Value) {
+			return false, true, fmt.Sprintf("回退源还是 %s, 期望 %s", orNone(snap.FallbackOrigin), want.Value)
+		}
+		return true, true, ""
 
 	case "saas.custom_hostname":
-		if snap.CustomHostname.Exists {
-			return true, true, ""
+		if !snap.CustomHostname.Exists {
+			return false, true, "SaaS 区里还没有这个自定义主机名"
 		}
-		return false, true, "SaaS 区里还没有这个自定义主机名"
+		// 主机名在了不算完: 源服务器字段配在它身上, 与声明的「自定义源」漂移时这一步必须退回 ——
+		// 步骤一直显示完成的话, 前端不渲染执行按钮, 巡检报的错就没有任何入口能修
+		if reasons := errorReasons(checkCustomOrigin(h, snap.CustomHostname)); len(reasons) > 0 {
+			return false, true, strings.Join(reasons, "; ")
+		}
+		return true, true, ""
 
 	case "dnspod.zone":
 		if len(snap.DNSPodNameservers) == 0 {

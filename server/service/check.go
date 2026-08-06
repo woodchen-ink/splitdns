@@ -162,7 +162,7 @@ func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 				Code:   "route.mismatch",
 				Title:  fmt.Sprintf("线路「%s」指向的目标与配置不符", route.Line),
 				Detail: fmt.Sprintf("实际 %s / 期望 %s", rec.Value, want),
-				Fix:    "改 DNSPod 上的记录值, 或把这里的回源配置改成实际值",
+				Fix:    "在「配置分线路解析记录」那一步让程序覆盖 (会先列出差异等确认), 或把这里的回源配置改成实际值",
 			})
 		}
 		if !rec.Enabled {

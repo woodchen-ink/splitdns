@@ -31,6 +31,20 @@ func checkSaaS(h model.Hostname, snap model.Snapshot) []model.Finding {
 		})
 	}
 
+	// 值也要对账, 只看状态发现不了漂移: 改了回退源落点却没重跑「设置回退源」, 旧回退源照样 active。
+	// 本域名没声明「SaaS 回退源」落点时不判 —— 回退源是整个区共享的, 可能归同区其它域名管;
+	// snap 里回退源为空时也不判, 那是"没设"或"没读到", 由上面的状态检查和拉取错误各自兜着
+	if want := fallbackOriginTarget(h); want != nil && want.Value != "" &&
+		snap.FallbackOrigin != "" && !sameName(snap.FallbackOrigin, want.Value) {
+		out = append(out, model.Finding{
+			Level:  model.LevelError,
+			Code:   "saas.fallback_mismatch",
+			Title:  "SaaS 区的回退源与配置不符",
+			Detail: fmt.Sprintf("实际 %s / 配置 %s", snap.FallbackOrigin, want.Value),
+			Fix:    "在「在 SaaS 区设置回退源」那一步点自动执行, 程序会把它改过去",
+		})
+	}
+
 	ch := snap.CustomHostname
 	if !ch.Exists {
 		return append(out, model.Finding{

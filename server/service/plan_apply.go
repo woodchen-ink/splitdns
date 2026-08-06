@@ -64,7 +64,7 @@ func ApplyStep(ctx context.Context, planID, stepID uint, confirm bool, action st
 	case "dnspod.dcv_txt":
 		return applyDCVRecords(ctx, *h, snap)
 	case "dnspod.routes":
-		return applyRouteRecords(ctx, *h, snap)
+		return applyRouteRecords(ctx, *h, snap, confirm)
 	case "cf.delegation":
 		return applyDelegation(ctx, *h, snap)
 	case "cf.cleanup":
@@ -79,10 +79,7 @@ func ApplyStep(ctx context.Context, planID, stepID uint, confirm bool, action st
 // 多条线路都是 saas_fallback 类型时优先认「默认」线那条 —— 优选场景下别的线可能挂着
 // 优选域名, 它不在本区, 拿它当回退源会把整个区的回源打断。
 func applyFallbackOrigin(ctx context.Context, h model.Hostname, snap model.Snapshot) (string, error) {
-	origin := findLineOrigin(h, defaultLine, model.OriginSaaSFallback)
-	if origin == nil {
-		origin = findOrigin(h, model.OriginSaaSFallback)
-	}
+	origin := fallbackOriginTarget(h)
 	if origin == nil {
 		return "", fmt.Errorf("这个域名没有绑定「SaaS 回退源」类型的回源, 先去回源配置里加一个")
 	}
@@ -286,8 +283,9 @@ func applyDCVRecords(ctx context.Context, h model.Hostname, snap model.Snapshot)
 }
 
 // applyRouteRecords 按线路配置把解析记录写进 DNSPod。
-// 只补缺失的, 已存在但值不对的不自动改 —— 那是线上正在生效的解析, 覆盖前得让人看见。
-func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapshot) (string, error) {
+// 缺失的直接补; 已存在但值不对的是线上正在生效的解析, 未确认时只退回差异清单 (ErrNeedConfirm),
+// 带确认再来一次才就地覆盖成期望值。
+func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapshot, confirm bool) (string, error) {
 	dp, err := dnspodClient(h.DNSPodCredentialID)
 	if err != nil {
 		return "", err
@@ -296,7 +294,9 @@ func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapsho
 	recordName := routeRecordName(h)
 	apex := routeRecords(snap.Records, recordName)
 
-	var created, conflicts []string
+	type mismatch struct{ line, have, want string }
+	var created []string
+	var conflicts []mismatch
 	for _, route := range h.Routes {
 		want, err := expectedValue(route, snap)
 		if err != nil {
@@ -304,7 +304,7 @@ func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapsho
 		}
 		if rec, ok := apex[route.Line]; ok {
 			if !sameName(rec.Value, want) {
-				conflicts = append(conflicts, fmt.Sprintf("线路 %s 现在指向 %s, 期望 %s", route.Line, rec.Value, want))
+				conflicts = append(conflicts, mismatch{line: route.Line, have: rec.Value, want: want})
 			}
 			continue
 		}
@@ -320,17 +320,82 @@ func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapsho
 		created = append(created, fmt.Sprintf("%s → %s", route.Line, want))
 	}
 
+	// 补缺失不需要确认, 也不该被冲突拦住, 所以上面已经先补完了;
+	// 覆盖动的是线上正在生效的解析, 未确认时逐条列出差异, 一条不动
+	if len(conflicts) > 0 && !confirm {
+		header := "以下线路已有记录且与配置不符, 确认后会就地覆盖成期望值 (旧值会丢)"
+		if len(created) > 0 {
+			header = fmt.Sprintf("缺失的 %d 条已先补上。%s", len(created), header)
+		}
+		lines := make([]string, 0, len(conflicts))
+		for _, c := range conflicts {
+			lines = append(lines, fmt.Sprintf("线路「%s」: %s → %s", c.line, c.have, c.want))
+		}
+		return "", needConfirm(header, lines)
+	}
+
+	var overwritten []string
+	if len(conflicts) > 0 {
+		// 快照里没有记录 ID, 覆盖只能按动手时的实时状态定位, 与拆除步骤不吃快照是同一个理由
+		live, err := dp.ListRecords(ctx, zone)
+		if err != nil {
+			return "", err
+		}
+		for _, c := range conflicts {
+			targets := overwriteTargets(live, recordName, c.line, c.want)
+			switch len(targets) {
+			case 0:
+				// 确认的间隙里已经被改对或删掉了, 是否生效交给巡检核实
+				continue
+			case 1:
+				rec := targets[0]
+				err := dp.ModifyRecord(ctx, zone, rec.ID, dnspod.NewRecord{
+					SubDomain: recordName,
+					Type:      recordTypeFor(c.want),
+					Line:      c.line,
+					Value:     c.want,
+					TTL:       rec.TTL,
+				})
+				if err != nil {
+					return "", err
+				}
+				overwritten = append(overwritten, fmt.Sprintf("%s: %s → %s", c.line, rec.Value, c.want))
+			default:
+				return "", fmt.Errorf("线路「%s」下有 %d 条落点记录, 说不清该覆盖哪条, 请到 DNSPod 里人工处理", c.line, len(targets))
+			}
+		}
+	}
+
 	var msg []string
 	if len(created) > 0 {
 		msg = append(msg, "已创建: "+strings.Join(created, "; "))
 	}
-	if len(conflicts) > 0 {
-		msg = append(msg, "以下线路已有记录且与配置不符, 未自动覆盖, 请自行确认: "+strings.Join(conflicts, "; "))
+	if len(overwritten) > 0 {
+		msg = append(msg, "已覆盖: "+strings.Join(overwritten, "; "))
 	}
 	if len(msg) == 0 {
 		return "线路记录已经齐了, 无需改动", nil
 	}
 	return strings.Join(msg, "。"), nil
+}
+
+// overwriteTargets 在实时记录里找出某线路下待覆盖的落点记录 (值不等于期望的 A / AAAA / CNAME)。
+// 快照按线路只留一条, 实时状态可能不止: 同线路多条都不符时说不清该改哪条, 由调用方拒绝执行。
+func overwriteTargets(records []dnspod.Record, name, line, want string) []dnspod.Record {
+	var out []dnspod.Record
+	for _, r := range records {
+		if !sameName(r.Name, name) || r.Line != line {
+			continue
+		}
+		if r.Type != "CNAME" && r.Type != "A" && r.Type != "AAAA" {
+			continue
+		}
+		if sameName(r.Value, want) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // applyDelegation 在 CF 父区创建 NS 委派记录。
@@ -450,6 +515,16 @@ func needConfirm(header string, lines []string) error {
 		return fmt.Errorf("%w: %s", ErrNeedConfirm, header)
 	}
 	return fmt.Errorf("%w: %s\n  %s", ErrNeedConfirm, header, strings.Join(lines, "\n  "))
+}
+
+// fallbackOriginTarget 找出该域名声明的「SaaS 回退源」落点, 默认线优先 ——
+// 优选场景下别的线挂的是优选域名, 拿它当回退源会把整个区的回源打断。
+// 设置 / 巡检 / 验证三处对"期望的回退源"必须是同一个答案, 都走这里。
+func fallbackOriginTarget(h model.Hostname) *model.Origin {
+	if o := findLineOrigin(h, defaultLine, model.OriginSaaSFallback); o != nil {
+		return o
+	}
+	return findOrigin(h, model.OriginSaaSFallback)
 }
 
 // findOrigin 在该域名的线路里找出指定类型的落点, 引用回源与内联填值一视同仁。

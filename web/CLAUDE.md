@@ -13,7 +13,7 @@ Next.js 16 App Router + `output: 'export'` 静态导出, Tailwind + Shadcn UI + 
 
 - 所有数据走同源 `/api`, 由 Go 承载; 不开 Next.js Route Handler
 - 后端统一返回 `{ code, data, msg }`, `lib/api.ts` 把非 200 业务码转成 `ApiError`, 组件只处理 `data`
-- 业务码 `4090` 表示破坏性操作需要二次确认, 待删清单在 `msg` 里, 由调用方渲染确认区
+- 业务码 `4090` 表示破坏性操作需要二次确认, 待删 / 待覆盖清单在 `msg` 里, 由调用方渲染确认区
 - `PlanWizard` 一套渲染跑两种流程 (`kind` = `setup` / `teardown`): 拆除时允许跳过步骤, 并且不渲染巡检报告 ——
   记录没了本来就是目的, 报告整片变红只会误导
 - 数组字段可能是 `null` (Go 空切片的序列化结果), 消费前一律 `?? []`

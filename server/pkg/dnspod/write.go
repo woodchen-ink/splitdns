@@ -148,6 +148,33 @@ type NewRecord struct {
 // DNSPod 免费版最低只能到 600 秒, 填更小的值会被接口直接拒掉。
 const DefaultTTL = 600
 
+// ModifyRecord 就地修改一条解析记录 (类型和值可以一起改), recordID 取自 ListRecords。
+// 用改而不是删了重建: 中间不存在"记录短暂消失"的窗口。
+func (c *Client) ModifyRecord(ctx context.Context, domain string, recordID uint64, r NewRecord) error {
+	if r.TTL == 0 {
+		r.TTL = DefaultTTL
+	}
+	req := dnspod.NewModifyRecordRequest()
+	req.Domain = common.StringPtr(domain)
+	req.RecordId = common.Uint64Ptr(recordID)
+	req.SubDomain = common.StringPtr(r.SubDomain)
+	req.RecordType = common.StringPtr(r.Type)
+	req.RecordLine = common.StringPtr(r.Line)
+	req.Value = common.StringPtr(r.Value)
+	req.TTL = common.Uint64Ptr(r.TTL)
+	if r.Priority != nil {
+		req.MX = common.Uint64Ptr(*r.Priority)
+	}
+
+	if _, err := c.api.ModifyRecordWithContext(ctx, req); err != nil {
+		if sdkErr, ok := err.(*terrors.TencentCloudSDKError); ok {
+			return fmt.Errorf("修改 %s 的记录 %d 失败: %s %s", domain, recordID, sdkErr.Code, sdkErr.Message)
+		}
+		return fmt.Errorf("修改 %s 的记录 %d 失败: %w", domain, recordID, err)
+	}
+	return nil
+}
+
 // CreateRecord 添加一条解析记录。
 func (c *Client) CreateRecord(ctx context.Context, domain string, r NewRecord) error {
 	if r.TTL == 0 {
