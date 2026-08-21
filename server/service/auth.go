@@ -255,7 +255,6 @@ func saveAccount(tok *czlconnect.Token, info *czlconnect.UserInfo) error {
 		Nickname:     info.Nickname,
 		Email:        info.Email,
 		Avatar:       info.Avatar,
-		GroupsRaw:    info.Groups,
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
 		ExpiresAt:    tok.Expiry(now),

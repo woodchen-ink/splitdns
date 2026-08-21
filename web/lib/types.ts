@@ -205,7 +205,6 @@ export interface AuthUser {
   nickname: string;
   email: string;
   avatar: string;
-  groups: string[] | null;
   scope: string;
   expiresAt: string;
   loggedInAt: string;

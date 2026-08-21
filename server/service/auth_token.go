@@ -168,7 +168,6 @@ func syncUserInfoLocked(ctx context.Context) error {
 		"nickname":  info.Nickname,
 		"email":     info.Email,
 		"avatar":    info.Avatar,
-		"groups":    info.Groups,
 	}).Error
 	if err != nil {
 		return fmt.Errorf("更新用户信息失败: %w", err)

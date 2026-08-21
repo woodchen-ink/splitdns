@@ -99,8 +99,6 @@ type UserInfo struct {
 	Nickname string `json:"nickname"`
 	Email    string `json:"email"`
 	Avatar   string `json:"avatar"`
-	// Groups 是逗号分隔的分组串, 继承关系已由服务端展开
-	Groups string `json:"groups"`
 }
 
 // Exchange 用授权码换令牌。
