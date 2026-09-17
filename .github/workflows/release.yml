@@ -27,7 +27,7 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-build
 
       - name: 安装 NSIS
@@ -53,7 +53,7 @@ jobs:
           Compress-Archive -Path splitdns.exe,README.md -DestinationPath "splitdns-$env:VERSION-windows-amd64-portable.zip"
           Move-Item splitdns-amd64-installer.exe "splitdns-$env:VERSION-windows-amd64-installer.exe"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: |
@@ -64,7 +64,7 @@ jobs:
     needs: version
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-build
 
       - name: 构建 universal .app
@@ -79,7 +79,7 @@ jobs:
         # 用 ditto 而不是 zip: .app 是目录, 里面有符号链接与可执行位, zip 会丢
         run: ditto -c -k --sequesterRsrc --keepParent splitdns.app "splitdns-$VERSION-macos-universal.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: desktop/build/bin/*-macos-universal.zip
@@ -89,12 +89,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
