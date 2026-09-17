@@ -28,7 +28,9 @@ Unicode true
 ## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
 ## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
 ####
-## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
+## Per-user install under %LOCALAPPDATA%\CZL\<product>: no UAC, nothing in Program Files.
+## wails_tools.nsh is regenerated on every build, so every override has to live in this file.
+!define REQUEST_EXECUTION_LEVEL "user"
 ####
 ## Include the wails tools
 ####
@@ -38,7 +40,7 @@ Unicode true
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
 
-VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
+VIAddVersionKey "CompanyName"     "CZL"
 VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
 VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
@@ -52,13 +54,11 @@ ManifestDPIAware true
 
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
-# !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
-# !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
+# No directory page: the install root is fixed, and the app resolves it from %LOCALAPPDATA% at runtime anyway.
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
@@ -72,11 +72,41 @@ ManifestDPIAware true
 
 Name "${INFO_PRODUCTNAME}"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
+InstallDir "$LOCALAPPDATA\CZL\${INFO_PRODUCTNAME}"
 ShowInstDetails show # This will always show the installation details.
 
+# Uninstall entry goes to HKCU: wails.writeUninstaller writes HKLM, which fails silently without admin.
+!macro czl.writeUninstaller
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+
+    WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "CZL"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+    WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
+    WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
+    WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
+
+    ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+    IntFmt $0 "0x%08X" $0
+    WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
+!macroend
+
 Function .onInit
-   !insertmacro wails.checkArchitecture
+    !insertmacro wails.checkArchitecture
+
+    # Older releases installed for all users under Program Files. Removing that needs admin,
+    # so only offer to launch its own uninstaller. User data is not touched by it and is
+    # migrated into the new layout on first start.
+    SetRegView 64
+    ReadRegStr $0 HKLM "${UNINST_KEY}" "UninstallString"
+    ${If} $0 != ""
+        MessageBox MB_YESNO|MB_ICONQUESTION "An older ${INFO_PRODUCTNAME} is installed for all users under Program Files.$\r$\n$\r$\nRun its uninstaller now? Your data is kept either way." /SD IDNO IDNO skipLegacy
+        ExecWait $0
+    skipLegacy:
+    ${EndIf}
 FunctionEnd
 
 Section
@@ -94,15 +124,23 @@ Section
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
-    !insertmacro wails.writeUninstaller
+    !insertmacro czl.writeUninstaller
 SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
 
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
+    # Program files and rebuildable dirs go; data\ only if the user says so (default: keep).
+    # Never RMDir /r $INSTDIR: data\ lives inside it.
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    RMDir /r "$INSTDIR\cache"
+    RMDir /r "$INSTDIR\logs"
+    MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete ${INFO_PRODUCTNAME} data (domains, credentials, login)?$\r$\n$\r$\nChoose No to keep it for a later reinstall." /SD IDNO IDNO keepData
+        RMDir /r "$INSTDIR\data"
+    keepData:
 
-    RMDir /r $INSTDIR
+    # WebView2 data path used by releases before the CZL layout
+    RMDir /r "$APPDATA\${PRODUCT_EXECUTABLE}"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
@@ -110,5 +148,10 @@ Section "uninstall"
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
 
-    !insertmacro wails.deleteUninstaller
+    Delete "$INSTDIR\uninstall.exe"
+    DeleteRegKey HKCU "${UNINST_KEY}"
+
+    # Non-recursive: removed only when empty, so a kept data\ keeps its parents
+    RMDir "$INSTDIR"
+    RMDir "$LOCALAPPDATA\CZL"
 SectionEnd

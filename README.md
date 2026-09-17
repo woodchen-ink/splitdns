@@ -38,17 +38,20 @@ CNAME（或优选 IP 的 A 记录），流量照样进 CF 边缘、按 Host 头�
 
 **Windows**
 
-| | 数据存在哪 | 适合 |
+| | 装在哪 | 适合 |
 |---|---|---|
-| **安装版** `*-installer.exe` | `%APPDATA%\splitdns` | 常用，升级重装不动数据 |
-| **绿色版** `*-portable.zip` | exe 同级 `data/` | 解压即用，整个文件夹拷走就带走全部配置 |
+| **安装版** `*-installer.exe` | `%LOCALAPPDATA%\CZL\splitdns`，按用户安装，不要管理员权限 | 常用，升级重装不动数据 |
+| **绿色版** `*-portable.zip` | 解压到哪都行 | 不想跑安装器 |
+
+两种包的数据都在 `%LOCALAPPDATA%\CZL\splitdns\data`，共用同一份；换机器用「数据搬家」导出导入。
+旧版本的数据（`%APPDATA%\splitdns` 或绿色版 exe 同级的 `data\`）首次启动会自动搬过来。
 
 机器上没有 WebView2 会自己拉起来装。
 
 **macOS**
 
 `*-macos-universal.zip` 解压出 `splitdns.app`，Intel 与 Apple Silicon 通用，数据在
-`~/Library/Application Support/splitdns`。
+`~/Library/Application Support/CZL/splitdns`（旧版目录里的数据首次启动自动搬过来）。
 
 没有做签名和公证，首次打开会被 Gatekeeper 拦下——右键点 `.app` → 打开 → 再点一次「打开」即可，
 或者 `xattr -dr com.apple.quarantine /Applications/splitdns.app`。

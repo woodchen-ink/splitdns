@@ -218,12 +218,24 @@ cd desktop && wails build -platform darwin/universal -skipbindings
 ```
 
 **macOS 端只能在 macOS 上构建** (要链 WebKit, 交叉编译不可行), CI 里是独立的 job。
-macOS 上数据一律走 `~/Library/Application Support/splitdns` —— 二进制在 .app 包里,
-往旁边写会污染包并破坏签名。发出去的 .app 没签名没公证, Gatekeeper 会拦, 说明写在 Release 里。
+发出去的 .app 没签名没公证, Gatekeeper 会拦, 说明写在 Release 里。
+
+**安装与数据目录** (`desktop/appdir.go` + `build/windows/installer/project.nsi`): 根目录固定为
+Windows `%LOCALAPPDATA%\CZL\splitdns` / macOS `~/Library/Application Support/CZL/splitdns` /
+Linux `~/.local/share/CZL/splitdns`, 下分 `data/` (库)、`logs/`、`cache/` (摊开的前端产物 + WebView2 用户数据)。
+- **与 exe 放在哪无关**: 绿色版和安装版共用同一份数据; 路径解析失败直接报错, 不回退到 exe 同级或工作目录。
+  Windows 不用 `os.UserConfigDir` (那是 Roaming); WebView2 默认也落 Roaming, 由 `WebviewUserDataPath` 收回
+- **旧版数据自动迁移** (`migrateLegacyData`): 新目录没有库时, 从 exe 同级 `data/` 或 `os.UserConfigDir()/splitdns`
+  把 `.db` + `-wal` + `-shm` 整组复制过来再删旧文件。**必须整组、全部复制成功才算数**:
+  只到了主文件, 下次启动会认定新库已存在不再搬, `-wal` 里未合并的事务就丢了
+- **安装器按用户装** (`REQUEST_EXECUTION_LEVEL "user"`, 无目录选择页): 卸载信息写 HKCU (自带 `czl.writeUninstaller`,
+  Wails 的宏写 HKLM, 没管理员权限会静默失败)。覆盖改动都放 `project.nsi`, `wails_tools.nsh` 每次构建会重新生成。
+  **卸载不许 `RMDir /r $INSTDIR`**: `data/` 在里面, 是否删数据由卸载时询问, 默认保留。
+  检测到旧版 HKLM 安装 (Program Files) 时只提示运行它的卸载程序, 删它要管理员权限
 
 前端产物由 `web` 的 `build:desktop` 脚本拷进 `desktop/frontend/dist` 再嵌进二进制 —— Go 的 embed 不能引用
 模块目录之外的文件。**构建时别带 `-s`**: 该目录不进仓库, 跳过前端构建的话 Wails 会塞一个占位 `index.html`,
-编译照样通过, 装出来却是个空壳。启动时有一道校验会拦住这种包。运行时按内容哈希决定是否重新摊到数据目录, **别改回按大小之类的近似判断**:
+编译照样通过, 装出来却是个空壳。启动时有一道校验会拦住这种包。运行时按内容哈希决定是否重新摊到 `cache/web`, **别改回按大小之类的近似判断**:
 只改子页面时首页大小不变, 会让新二进制配着旧前端跑。
 
 打 `v*` tag 触发 GitHub Actions 出 Release。

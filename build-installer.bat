@@ -80,9 +80,8 @@ echo ============================================
 echo   安装版  desktop\build\bin\splitdns-amd64-installer.exe
 echo   绿色版  desktop\build\bin\splitdns.exe
 echo.
-echo   两个用的是同一份二进制, 差别只在数据放哪:
-echo     安装版 -^> %%APPDATA%%\splitdns
-echo     绿色版 -^> exe 同级的 data\
+echo   两个用的是同一份二进制, 数据都在:
+echo     %%LOCALAPPDATA%%\CZL\splitdns\data
 echo   产物目录: %~dp0desktop\build\bin
 echo.
 pause
