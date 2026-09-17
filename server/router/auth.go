@@ -13,10 +13,14 @@ import (
 //
 // /api/open 也在里面: 登录页上的帮助链接要靠它调系统浏览器, 而那时候本来就还没登录。
 // 它只放行 http / https, 不会因为豁免而变成什么入口。
+//
+// /api/update 也不要求登录: 登录流程本身出了 bug 时, 修复它的新版本得能在登录页装上。
+// 它只会安装签名校验通过的官方发布包。
 var publicPrefixes = []string{
 	"/api/auth/",
 	"/api/healthz",
 	"/api/open",
+	"/api/update",
 }
 
 // requireLogin 拦下未登录的 /api 请求。

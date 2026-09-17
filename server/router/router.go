@@ -44,6 +44,10 @@ func New(cfg *config.Config) http.Handler {
 
 	api.HandleFunc("POST /api/open", handler.OpenExternal)
 
+	api.HandleFunc("GET /api/update", handler.GetUpdate)
+	api.HandleFunc("POST /api/update/check", handler.CheckUpdate)
+	api.HandleFunc("POST /api/update/install", handler.InstallUpdate)
+
 	api.HandleFunc("GET /api/export/db", handler.ExportDatabase)
 	api.HandleFunc("POST /api/import/db", handler.ImportDatabase)
 

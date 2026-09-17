@@ -109,12 +109,37 @@ Function .onInit
     ${EndIf}
 FunctionEnd
 
+# /relaunch is passed by the app's auto-update: start the new version once files are in place.
+Function .onInstSuccess
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "/relaunch" $R1
+    IfErrors +2
+    Exec '"$INSTDIR\${PRODUCT_EXECUTABLE}"'
+FunctionEnd
+
 Section
     !insertmacro wails.setShellContext
 
     !insertmacro wails.webview2runtime
 
     SetOutPath $INSTDIR
+
+    # Auto-update starts this installer and then quits the app; wait until its exe is released.
+    # Also covers a manual install while the app is still open.
+    StrCpy $1 0
+    waitExe:
+    ClearErrors
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    IfErrors 0 exeReleased
+    IntOp $1 $1 + 1
+    IntCmp $1 40 exeBusy 0 exeBusy
+    Sleep 500
+    Goto waitExe
+    exeBusy:
+    MessageBox MB_OK|MB_ICONSTOP "${INFO_PRODUCTNAME} is still running. Close it and run the installer again." /SD IDOK
+    Abort
+    exeReleased:
 
     !insertmacro wails.files
 

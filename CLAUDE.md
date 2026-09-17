@@ -132,6 +132,16 @@
   **导出副本里的 `account` 表会被清掉** (`stripAccount`): 备份是业务数据不是身份, 那份 `refresh_token`
   拿到手就能以本人身份调 CZL Connect。平台密钥保留 (换机器就是要它们), 登录换台机器重登一次。
   同理导入别人的库之后本机会变成未登录 —— `importTables` 不要求有 `account`, 老备份照样导得进来
+- **自动更新** (`pkg/selfupdate` + `service/update*.go` + `desktop/update*.go`): 读公开仓库的
+  GitHub `releases/latest`, 启动 10 秒后查一次、之后每 6 小时一次 (未认证限流 60 次/小时, 前端只读内存状态不触发检查)。
+  **每个包都要过签名**: CI 用 `server/tools/updatesign` 给全部产物出 `SHA256SUMS` + ed25519 签名
+  (私钥在 secret `UPDATE_SIGNING_KEY`, 公钥是 `desktop/updatekey.pub` 编进二进制), 客户端先验清单签名再比对安装包摘要,
+  顺序不能反。公钥为空、版本号不是 `vX.Y.Z` (本地构建为 `dev`, CI 用 `-ldflags -X main.version` 注入) 时整个功能关闭。
+  安装手段由桌面壳给出: exe 在安装根目录下 = 安装版, 静默跑新安装器 `/S /relaunch` 后退出 (安装器等 exe 释放再覆盖、装完拉起新版本);
+  否则是绿色版, 把运行中的 exe 改名 `.old` 腾位置写入新 exe, 带 `--wait-pid` 拉起新进程 ——
+  **新进程必须等老进程退干净**, 不然单实例锁还在老进程手里, 新进程会把自己当第二个实例转交参数后退出。
+  macOS 只提示并打开下载页 (未签名的 .app 自己替换容易被 Gatekeeper 拦)。
+  `/api/update` 不要求登录: 登录流程出 bug 时, 修复它的版本得能在登录页装上
 
 ## 平台上踩过的坑 (改动相关代码前先看这里)
 

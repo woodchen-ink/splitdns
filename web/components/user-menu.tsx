@@ -59,7 +59,7 @@ export function UserMenu() {
   const name = user.nickname || user.username || user.email;
 
   return (
-    <div className="ml-auto flex items-center gap-2">
+    <div className="flex items-center gap-2">
       {data?.tokenError && (
         // 刷新失败不影响继续用 (令牌到期前都还有效), 所以只是提示, 不打断操作
         <span className="text-muted-foreground hidden text-xs sm:inline" title={data.tokenError}>

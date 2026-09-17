@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { UpdateButton } from "@/components/update-button";
 
 interface LoginStart {
   authorizeUrl: string;
@@ -64,7 +65,8 @@ export function LoginScreen({ session }: { session: Session }) {
   const waiting = session.waiting;
 
   return (
-    <div className="flex h-full items-center justify-center overflow-y-auto px-4 py-10">
+    <div className="relative flex h-full items-center justify-center overflow-y-auto px-4 py-10">
+      <UpdateButton className="absolute top-3 right-4" />
       <div className="w-full max-w-md space-y-6">
         <div className="space-y-1.5 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">splitdns</h1>

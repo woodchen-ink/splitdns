@@ -225,3 +225,33 @@ export interface Session {
   // tokenError 最近一次刷新令牌失败的原因; 属于暂时没刷上, 不影响继续使用
   tokenError: string;
 }
+
+// UpdateState 是自动更新所处的阶段, 取值由后端 service/update.go 定义
+export type UpdateState =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "installing";
+
+export interface UpdateRelease {
+  tag: string;
+  notes: string;
+  url: string;
+  publishedAt: string;
+}
+
+export interface UpdateStatus {
+  state: UpdateState | string;
+  currentVersion: string;
+  // disabledReason 仅 disabled 时有值 (本地构建 / 包里没有更新公钥)
+  disabledReason?: string;
+  latest: UpdateRelease | null;
+  // canAutoInstall 为 false 时只能去下载页手动更新 (macOS、老版本发布没有签名文件)
+  canAutoInstall: boolean;
+  received: number;
+  total: number;
+  checkedAt: string | null;
+  error: string;
+}

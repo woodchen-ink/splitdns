@@ -22,6 +22,8 @@ Next.js 16 App Router + `output: 'export'` 静态导出, Tailwind + Shadcn UI + 
 - `components/auth-gate.tsx` 是全站闸门, 连导航一起包在里面: 登录态不是 `active` 就整页换成
   `login-screen.tsx`。业务码 `401` 表示未登录, 由 `providers.tsx` 的 cache `onError` 统一失效
   `queryKeys.session()`, 组件里不各判一次
+- `components/update-button.tsx` 在顶栏和登录页各挂一个: 只轮询 `GET /api/update` (读后端内存, 下载 / 安装期间 1s, 平时 60s),
+  不自己触发 GitHub 检查; 能否自动安装以后端 `canAutoInstall` 为准, 前端不按平台判断
 - 当前 shadcn `Button` 不支持 `asChild`, 需要按钮样式的链接用 `buttonVariants()` 给 `Link` 加 class
 - **字体走 `geist` 包, 不要用 `next/font/google`**: 后者构建时要现拉 fonts.googleapis.com,
   那个域名在国内连不上, 本地一构建就直接失败 (CI 有网所以只坏本地)。CSS 变量名两者一致, 换回去不会报错、只会构建不了

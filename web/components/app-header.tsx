@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { UpdateButton } from "@/components/update-button";
 import { UserMenu } from "@/components/user-menu";
 
 const NAV = [
@@ -44,6 +45,7 @@ export function AppHeader() {
             );
           })}
         </nav>
+        <UpdateButton className="ml-auto" />
         <UserMenu />
       </div>
     </header>

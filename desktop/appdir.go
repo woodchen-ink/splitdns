@@ -20,6 +20,8 @@ type appDirs struct {
 	Logs string
 	// Cache 下的东西删了下次启动会自己重建: 摊开的前端产物、WebView2 用户数据
 	Cache string
+	// Updates 下载中的更新包, 用时才建, 每次启动清空
+	Updates string
 }
 
 // resolveAppDirs 按平台约定解析安装根目录并建好子目录。
@@ -33,10 +35,11 @@ func resolveAppDirs() (appDirs, error) {
 		return appDirs{}, err
 	}
 	dirs := appDirs{
-		Root:  root,
-		Data:  filepath.Join(root, "data"),
-		Logs:  filepath.Join(root, "logs"),
-		Cache: filepath.Join(root, "cache"),
+		Root:    root,
+		Data:    filepath.Join(root, "data"),
+		Logs:    filepath.Join(root, "logs"),
+		Cache:   filepath.Join(root, "cache"),
+		Updates: filepath.Join(root, "updates"),
 	}
 	for _, dir := range []string{dirs.Data, dirs.Logs, dirs.Cache} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

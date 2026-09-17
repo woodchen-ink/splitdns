@@ -32,6 +32,9 @@ var assets embed.FS
 // main 起一个原生窗口, 里面跑的还是服务端那套 handler ——
 // 桌面版不监听任何端口, Wails 直接把 webview 的请求交给 handler, 因此也不需要鉴权。
 func main() {
+	// 自更新拉起的新进程要先等老进程退干净, 单实例锁才轮得到自己
+	waitForPreviousInstance(os.Args[1:])
+
 	dirs, err := resolveAppDirs()
 	if err != nil {
 		fatal("", err)
@@ -60,6 +63,9 @@ func main() {
 	if err := initapp.Init(cfg); err != nil {
 		fatal(logPath, err)
 	}
+
+	cleanupAfterUpdate(dirs)
+	startUpdater(dirs)
 
 	// 注册失败不拦启动: 登录页上还留着"手动粘贴回调地址"这条路, 为了一条注册表项
 	// 让整个工具打不开不划算

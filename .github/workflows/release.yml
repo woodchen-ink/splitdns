@@ -42,7 +42,17 @@ jobs:
         # -webview2 embed: 目标机器没装 WebView2 运行时也能自己拉起来装, 不能假设环境
         # -skipbindings: 前端不用 Wails 的 JS 绑定, 所有交互都走 /api
         # -nsis: 顺带出一个安装版, 与绿色版是同一份二进制
-        run: wails build -platform windows/amd64 -webview2 embed -skipbindings -nsis
+        # -ldflags 注入版本号: 自动更新靠它判断新旧, 不注入就是 dev, 永远不检查更新
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # 安装器的 DisplayVersion / 文件版本取自 wails.json, 只认纯数字的 x.y.z (手动触发的 dev-xxx 不改)
+          if ($env:VERSION -match '^v(\d+\.\d+\.\d+)$') {
+            $cfg = Get-Content wails.json -Raw | ConvertFrom-Json
+            $cfg.info.productVersion = $Matches[1]
+            $cfg | ConvertTo-Json -Depth 10 | Set-Content wails.json -Encoding utf8
+          }
+          wails build -platform windows/amd64 -webview2 embed -skipbindings -nsis -ldflags "-X main.version=$env:VERSION"
 
       - name: 打包
         working-directory: desktop/build/bin
@@ -70,7 +80,9 @@ jobs:
       - name: 构建 universal .app
         working-directory: desktop
         # darwin 端要链 WebKit, 只能在 macOS 上编译, 交叉编译不可行
-        run: wails build -platform darwin/universal -skipbindings
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: wails build -platform darwin/universal -skipbindings -ldflags "-X main.version=$VERSION"
 
       - name: 打包
         working-directory: desktop/build/bin
@@ -89,10 +101,24 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+          cache-dependency-path: server/go.sum
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+
+      # 给全部产物出 SHA256SUMS + ed25519 签名, 客户端自动更新只认签名对得上的包。
+      # 工具会拿仓库里的公钥回验: secret 缺失或与公钥不是一对时这里就失败, 不发出装不上的版本
+      - name: 签名
+        working-directory: server
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: go run ./tools/updatesign -dir ../dist -pub ../desktop/updatekey.pub
 
       - uses: softprops/action-gh-release@v3
         with:
@@ -125,4 +151,7 @@ jobs:
 
             ### 升级
 
-            覆盖安装即可, 首次启动会自动更新内置前端, 数据不受影响。
+            程序会自动检查新版本: Windows 在顶栏点「更新」即可下载安装并重启 (安装版与绿色版都支持);
+            macOS 会提示新版本并打开下载页。也可以手动覆盖安装, 数据不受影响。
+
+            `SHA256SUMS` 与 `SHA256SUMS.sig` 是自动更新用的校验文件, 手动下载可以忽略。
