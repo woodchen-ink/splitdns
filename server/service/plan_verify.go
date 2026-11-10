@@ -129,14 +129,17 @@ func refreshInstruction(step *model.Step, h model.Hostname, snap model.Snapshot)
 		var b strings.Builder
 		fmt.Fprintf(&b, "到 DNSPod 的 %s 里, 给主机记录 %s 按线路加记录:\n", zone, routeRecordName(h))
 		for _, route := range h.Routes {
-			want, err := expectedValue(route, snap)
+			values, err := expectedValues(route, snap)
 			if err != nil {
 				fmt.Fprintf(&b, "  线路 %s   ⚠ %s\n", route.Line, err.Error())
 				continue
 			}
-			fmt.Fprintf(&b, "  线路 %s   %s   值 %s\n", route.Line, recordTypeFor(want), want)
+			for _, w := range wantRecords(values) {
+				fmt.Fprintf(&b, "  线路 %s   %s   值 %s\n", route.Line, w.Type, w.Value)
+			}
 		}
-		b.WriteString("TTL 用 600 秒(DNSPod 免费版最低)。CF 那条务必挂在「默认」线兜底, 只配境内+境外会让识别不出归属的解析器拿不到记录。")
+		b.WriteString("TTL 用 600 秒(DNSPod 免费版最低)。双栈的线路 A 和 AAAA 各一条。" +
+			"CF 那条务必挂在「默认」线兜底, 只配境内+境外会让识别不出归属的解析器拿不到记录。")
 		step.Instruction = b.String()
 
 	case "cf.delegation":
@@ -206,36 +209,6 @@ func sniRouteInstruction(h model.Hostname, snap model.Snapshot) string {
 	}
 	b.WriteString("\n这一步程序无法自动验证, 确认没问题后点「确认完成」。")
 	return b.String()
-}
-
-// recordTypeFor 按落点值形态推断该建什么类型的记录: 像 IP 就是 A/AAAA, 否则 CNAME。
-func recordTypeFor(value string) string {
-	if strings.Count(value, ":") >= 2 {
-		return "AAAA"
-	}
-	if isIPv4(value) {
-		return "A"
-	}
-	return "CNAME"
-}
-
-// isIPv4 判断字符串是否是点分十进制 IPv4。
-func isIPv4(s string) bool {
-	parts := strings.Split(s, ".")
-	if len(parts) != 4 {
-		return false
-	}
-	for _, p := range parts {
-		if p == "" || len(p) > 3 {
-			return false
-		}
-		for _, ch := range p {
-			if ch < '0' || ch > '9' {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // stepSatisfied 判定某一步是否已经在真实环境里生效。

@@ -411,13 +411,18 @@ export function HostnameForm({
                     onChange={(e) => setRoute(i, { value: e.target.value })}
                     placeholder={
                       route.kind === "ip"
-                        ? "203.0.113.10"
+                        ? "203.0.113.10, 2001:db8::10"
                         : route.kind === "saas_fallback"
                           ? "SaaS 区里的橙云记录名"
                           : "CDN 给的 CNAME 或优选域名"
                     }
                     className="mt-1"
                   />
+                  {route.kind === "ip" && (
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      双栈用逗号分隔填一个 IPv4 + 一个 IPv6, 这条线路会同时建 A 和 AAAA
+                    </p>
+                  )}
                 </div>
                 {route.kind === "saas_fallback" && (
                   <div>

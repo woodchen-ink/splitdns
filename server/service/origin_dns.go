@@ -134,7 +134,7 @@ func judgeOriginRecord(st OriginDNS, o model.Origin, records []cloudflare.DNSRec
 			st.CanCreate = true
 			st.Message = fmt.Sprintf("CF 上没有 %s 记录, 这里登记的源站 IP %s 没有落到实处", want, addr)
 			return st
-		case !sameName(rec.Content, addr):
+		case !sameTarget(rec.Content, addr):
 			st.Level = model.LevelWarn
 			st.Message = fmt.Sprintf("CF 上的 %s 记录指向 %s, 与这里登记的 %s 不一致", want, rec.Content, addr)
 			return st
@@ -321,9 +321,14 @@ func lookupOriginRecord(ctx context.Context, cf *cloudflare.Client, zoneID, zone
 	return state
 }
 
-// hostnameTarget 判定落点值是不是主机名。是 IP 的落点解析直接落到它, CF 里不需要有对应记录。
+// hostnameTarget 判定落点值是不是主机名。是 IP (含双栈的一组 IP) 的落点解析直接落到它,
+// CF 里不需要有对应记录。
 func hostnameTarget(value string) bool {
-	v := normalizeName(value)
+	values := originAddresses(value)
+	if len(values) != 1 {
+		return false
+	}
+	v := normalizeName(values[0])
 	return strings.Contains(v, ".") && recordTypeFor(v) == "CNAME"
 }
 

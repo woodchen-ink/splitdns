@@ -21,6 +21,12 @@ func SaveOrigin(o *model.Origin) error {
 	if o.Name == "" || o.Value == "" {
 		return fmt.Errorf("回源的名称和落点值都不能为空")
 	}
+	if err := validateTargetValue(o.Value); err != nil {
+		return err
+	}
+	if err := validateAddresses(o.Address); err != nil {
+		return err
+	}
 	fillCustomOriginSNI(&o.Kind, &o.Value, &o.SNI)
 	return database.DB.Save(o).Error
 }

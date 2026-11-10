@@ -282,9 +282,11 @@ func applyDCVRecords(ctx context.Context, h model.Hostname, snap model.Snapshot)
 	return fmt.Sprintf("已写入 %d 条验证 TXT, 等 CF 轮询到就会签发证书", len(missing)), nil
 }
 
-// applyRouteRecords 按线路配置把解析记录写进 DNSPod。
-// 缺失的直接补; 已存在但值不对的是线上正在生效的解析, 未确认时只退回差异清单 (ErrNeedConfirm),
-// 带确认再来一次才就地覆盖成期望值。
+// applyRouteRecords 按线路配置把解析记录写进 DNSPod, 双栈线路 A 与 AAAA 各一条。
+// 缺失的直接补; 已存在但值 / 类型不对、或配置里已经没有的, 都是线上正在生效的解析,
+// 未确认时只退回逐条清单 (ErrNeedConfirm), 带确认再来一次才动手。
+//
+// 对账按动手时的实时记录做: 快照没有记录 ID, 改 / 删都要它, 与拆除步骤不吃快照是同一个理由。
 func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapshot, confirm bool) (string, error) {
 	dp, err := dnspodClient(h.DNSPodCredentialID)
 	if err != nil {
@@ -292,77 +294,103 @@ func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapsho
 	}
 	zone := h.DNSPodZone()
 	recordName := routeRecordName(h)
-	apex := routeRecords(snap.Records, recordName)
+	live, err := dp.ListRecords(ctx, zone)
+	if err != nil {
+		return "", err
+	}
+	records := make([]model.DNSRecord, len(live))
+	for i, r := range live {
+		records[i] = model.DNSRecord{Name: r.Name, Type: r.Type, Line: r.Line, Value: r.Value, TTL: r.TTL, Enabled: r.Enabled}
+	}
 
-	type mismatch struct{ line, have, want string }
-	var created []string
-	var conflicts []mismatch
+	plans := make([]linePlan, 0, len(h.Routes))
 	for _, route := range h.Routes {
-		want, err := expectedValue(route, snap)
+		values, err := expectedValues(route, snap)
 		if err != nil {
 			return "", fmt.Errorf("线路 %s: %w", route.Line, err)
 		}
-		if rec, ok := apex[route.Line]; ok {
-			if !sameName(rec.Value, want) {
-				conflicts = append(conflicts, mismatch{line: route.Line, have: rec.Value, want: want})
-			}
-			continue
+		p := planLine(records, recordName, route.Line, values)
+		if p.Ambiguous != "" {
+			return "", fmt.Errorf("%s, 请到 DNSPod 里人工处理后再来", p.Ambiguous)
 		}
-		err = dp.CreateRecord(ctx, zone, dnspod.NewRecord{
-			SubDomain: recordName,
-			Type:      recordTypeFor(want),
-			Line:      route.Line,
-			Value:     want,
-		})
-		if err != nil {
-			return "", err
-		}
-		created = append(created, fmt.Sprintf("%s → %s", route.Line, want))
+		plans = append(plans, p)
 	}
 
-	// 补缺失不需要确认, 也不该被冲突拦住, 所以上面已经先补完了;
-	// 覆盖动的是线上正在生效的解析, 未确认时逐条列出差异, 一条不动
-	if len(conflicts) > 0 && !confirm {
-		header := "以下线路已有记录且与配置不符, 确认后会就地覆盖成期望值 (旧值会丢)"
+	create := func(p linePlan, w wantRecord) error {
+		return dp.CreateRecord(ctx, zone, dnspod.NewRecord{SubDomain: recordName, Type: w.Type, Line: p.Line, Value: w.Value})
+	}
+
+	// 补缺失不需要确认, 也不该被别的线路的冲突拦住, 所以先补;
+	// 要换类型 / 删记录的线路除外, 它的新增必须排在改删之后 (CNAME 与 A / AAAA 不能共存)
+	var created []string
+	for _, p := range plans {
+		if p.reshapes(records) {
+			continue
+		}
+		for _, w := range p.Create {
+			if err := create(p, w); err != nil {
+				return "", err
+			}
+			created = append(created, fmt.Sprintf("%s → %s", p.Line, describeRecord(w.Type, w.Value)))
+		}
+	}
+
+	var pending []string
+	for _, p := range plans {
+		for _, i := range p.Delete {
+			pending = append(pending, fmt.Sprintf("线路「%s」: 删除 %s", p.Line, describeRecord(records[i].Type, records[i].Value)))
+		}
+		for _, m := range p.Modify {
+			r := records[m.Index]
+			pending = append(pending, fmt.Sprintf("线路「%s」: %s → %s", p.Line,
+				describeRecord(r.Type, r.Value), describeRecord(m.Want.Type, m.Want.Value)))
+		}
+		if p.reshapes(records) {
+			for _, w := range p.Create {
+				pending = append(pending, fmt.Sprintf("线路「%s」: 新增 %s", p.Line, describeRecord(w.Type, w.Value)))
+			}
+		}
+	}
+	if len(pending) > 0 && !confirm {
+		header := "以下线路已有记录且与配置不符, 确认后按清单覆盖 / 删除 (旧值会丢)"
 		if len(created) > 0 {
 			header = fmt.Sprintf("缺失的 %d 条已先补上。%s", len(created), header)
 		}
-		lines := make([]string, 0, len(conflicts))
-		for _, c := range conflicts {
-			lines = append(lines, fmt.Sprintf("线路「%s」: %s → %s", c.line, c.have, c.want))
-		}
-		return "", needConfirm(header, lines)
+		return "", needConfirm(header, pending)
 	}
 
-	var overwritten []string
-	if len(conflicts) > 0 {
-		// 快照里没有记录 ID, 覆盖只能按动手时的实时状态定位, 与拆除步骤不吃快照是同一个理由
-		live, err := dp.ListRecords(ctx, zone)
-		if err != nil {
-			return "", err
-		}
-		for _, c := range conflicts {
-			targets := overwriteTargets(live, recordName, c.line, c.want)
-			switch len(targets) {
-			case 0:
-				// 确认的间隙里已经被改对或删掉了, 是否生效交给巡检核实
-				continue
-			case 1:
-				rec := targets[0]
-				err := dp.ModifyRecord(ctx, zone, rec.ID, dnspod.NewRecord{
-					SubDomain: recordName,
-					Type:      recordTypeFor(c.want),
-					Line:      c.line,
-					Value:     c.want,
-					TTL:       rec.TTL,
-				})
-				if err != nil {
-					return "", err
-				}
-				overwritten = append(overwritten, fmt.Sprintf("%s: %s → %s", c.line, rec.Value, c.want))
-			default:
-				return "", fmt.Errorf("线路「%s」下有 %d 条落点记录, 说不清该覆盖哪条, 请到 DNSPod 里人工处理", c.line, len(targets))
+	var changed []string
+	for _, p := range plans {
+		// 顺序是 删 → 改 → 建: 每一步都不和同线路剩下的记录撞类型
+		for _, i := range p.Delete {
+			if err := dp.DeleteRecord(ctx, zone, live[i].ID); err != nil {
+				return "", err
 			}
+			changed = append(changed, fmt.Sprintf("%s: 删除 %s", p.Line, describeRecord(live[i].Type, live[i].Value)))
+		}
+		for _, m := range p.Modify {
+			rec := live[m.Index]
+			err := dp.ModifyRecord(ctx, zone, rec.ID, dnspod.NewRecord{
+				SubDomain: recordName,
+				Type:      m.Want.Type,
+				Line:      p.Line,
+				Value:     m.Want.Value,
+				TTL:       rec.TTL,
+			})
+			if err != nil {
+				return "", err
+			}
+			changed = append(changed, fmt.Sprintf("%s: %s → %s", p.Line,
+				describeRecord(rec.Type, rec.Value), describeRecord(m.Want.Type, m.Want.Value)))
+		}
+		if !p.reshapes(records) {
+			continue
+		}
+		for _, w := range p.Create {
+			if err := create(p, w); err != nil {
+				return "", err
+			}
+			created = append(created, fmt.Sprintf("%s → %s", p.Line, describeRecord(w.Type, w.Value)))
 		}
 	}
 
@@ -370,32 +398,13 @@ func applyRouteRecords(ctx context.Context, h model.Hostname, snap model.Snapsho
 	if len(created) > 0 {
 		msg = append(msg, "已创建: "+strings.Join(created, "; "))
 	}
-	if len(overwritten) > 0 {
-		msg = append(msg, "已覆盖: "+strings.Join(overwritten, "; "))
+	if len(changed) > 0 {
+		msg = append(msg, "已覆盖: "+strings.Join(changed, "; "))
 	}
 	if len(msg) == 0 {
 		return "线路记录已经齐了, 无需改动", nil
 	}
 	return strings.Join(msg, "。"), nil
-}
-
-// overwriteTargets 在实时记录里找出某线路下待覆盖的落点记录 (值不等于期望的 A / AAAA / CNAME)。
-// 快照按线路只留一条, 实时状态可能不止: 同线路多条都不符时说不清该改哪条, 由调用方拒绝执行。
-func overwriteTargets(records []dnspod.Record, name, line, want string) []dnspod.Record {
-	var out []dnspod.Record
-	for _, r := range records {
-		if !sameName(r.Name, name) || r.Line != line {
-			continue
-		}
-		if r.Type != "CNAME" && r.Type != "A" && r.Type != "AAAA" {
-			continue
-		}
-		if sameName(r.Value, want) {
-			continue
-		}
-		out = append(out, r)
-	}
-	return out
 }
 
 // applyDelegation 在 CF 父区创建 NS 委派记录。

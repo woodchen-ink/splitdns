@@ -98,6 +98,17 @@ func SaveHostname(ctx context.Context, h *model.Hostname, direct bool) error {
 	if h.SaaSZone != "" && inZone(h.Hostname, h.SaaSZone) {
 		return fmt.Errorf("SaaS 区 %s 管辖着 %s —— 自定义主机名不能是 SaaS 区自己的子域", h.SaaSZone, h.Hostname)
 	}
+	for _, r := range h.Routes {
+		if r.OriginID != 0 {
+			continue
+		}
+		if err := validateTargetValue(r.Value); err != nil {
+			return fmt.Errorf("线路「%s」: %w", r.Line, err)
+		}
+		if err := validateAddresses(r.Address); err != nil {
+			return fmt.Errorf("线路「%s」: %w", r.Line, err)
+		}
+	}
 
 	return database.DB.Transaction(func(tx *gorm.DB) error {
 		if h.ID != 0 {

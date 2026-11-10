@@ -34,7 +34,11 @@ const KINDS = [
     hint: "不是解析目标! 它配在自定义主机名上, 决定流量进了 CF 之后往哪台机器转。只有该域名要回源到另一台机器时才需要, 且源站必须能路由这个 SNI, 否则 403",
   },
   { value: "cname", label: "第三方 CDN CNAME", hint: "如 EdgeOne 给的加速 CNAME" },
-  { value: "ip", label: "直连源站 IP", hint: "解析直接落到这个 IP, 不过任何 CDN" },
+  {
+    value: "ip",
+    label: "直连源站 IP",
+    hint: "解析直接落到这个 IP, 不过任何 CDN。双栈用逗号分隔填一个 IPv4 + 一个 IPv6, 线路上 A 与 AAAA 各建一条",
+  },
 ];
 
 const EMPTY: Origin = { id: 0, name: "", kind: "cname", value: "", address: "", sni: "", note: "" };
@@ -162,17 +166,27 @@ export default function OriginsPage() {
           </div>
           <div className="space-y-1.5">
             <Label>落点值</Label>
-            <HostPicker
-              value={draft.value}
-              onChange={(value) => edit({ ...draft, value })}
-              zones={zoneList}
-              manual={manualHost}
-              onManualChange={setManualHost}
-              prefixPlaceholder="rn-22dc3"
-              fullPlaceholder="origin.mycdn.net"
-              required
-            />
-            {draft.value && (
+            {/* IP 落点没有域名后缀可选, 拼前缀那套只会碍事 */}
+            {draft.kind === "ip" ? (
+              <Input
+                value={draft.value}
+                onChange={(e) => edit({ ...draft, value: e.target.value })}
+                placeholder="203.0.113.10, 2001:db8::10"
+                required
+              />
+            ) : (
+              <HostPicker
+                value={draft.value}
+                onChange={(value) => edit({ ...draft, value })}
+                zones={zoneList}
+                manual={manualHost}
+                onManualChange={setManualHost}
+                prefixPlaceholder="rn-22dc3"
+                fullPlaceholder="origin.mycdn.net"
+                required
+              />
+            )}
+            {draft.kind !== "ip" && draft.value && (
               <p className="text-muted-foreground font-mono text-xs break-all">{draft.value}</p>
             )}
             {zones.isError && (

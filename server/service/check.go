@@ -122,7 +122,7 @@ func checkShadowed(snap model.Snapshot) []model.Finding {
 func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 	var out []model.Finding
 	recordName := routeRecordName(h)
-	apex := routeRecords(snap.Records, recordName)
+	lines := routeLines(snap.Records, recordName)
 
 	hasDefault := false
 	declared := map[string]bool{}
@@ -133,7 +133,7 @@ func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 		}
 		declared[route.Line] = true
 
-		want, err := expectedValue(route, snap)
+		values, err := expectedValues(route, snap)
 		if err != nil {
 			out = append(out, model.Finding{
 				Level:  model.LevelError,
@@ -144,35 +144,7 @@ func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 			})
 			continue
 		}
-
-		rec, ok := apex[route.Line]
-		if !ok {
-			out = append(out, model.Finding{
-				Level:  model.LevelError,
-				Code:   "route.missing",
-				Title:  fmt.Sprintf("线路「%s」在 DNSPod 上没有记录", route.Line),
-				Detail: fmt.Sprintf("期望指向 %s", want),
-				Fix:    fmt.Sprintf("在 DNSPod 的 %s 里给主机记录 %s 加一条「%s」线路记录", h.DNSPodZone(), recordName, route.Line),
-			})
-			continue
-		}
-		if !sameName(rec.Value, want) {
-			out = append(out, model.Finding{
-				Level:  model.LevelError,
-				Code:   "route.mismatch",
-				Title:  fmt.Sprintf("线路「%s」指向的目标与配置不符", route.Line),
-				Detail: fmt.Sprintf("实际 %s / 期望 %s", rec.Value, want),
-				Fix:    "在「配置分线路解析记录」那一步让程序覆盖 (会先列出差异等确认), 或把这里的回源配置改成实际值",
-			})
-		}
-		if !rec.Enabled {
-			out = append(out, model.Finding{
-				Level: model.LevelError,
-				Code:  "route.disabled",
-				Title: fmt.Sprintf("线路「%s」的记录处于停用状态", route.Line),
-				Fix:   "在 DNSPod 里启用该记录",
-			})
-		}
+		out = append(out, checkRouteLine(h, snap.Records, planLine(snap.Records, recordName, route.Line, values))...)
 	}
 
 	if len(h.Routes) > 0 && !hasDefault {
@@ -185,13 +157,17 @@ func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 	}
 
 	// 反向对账: DNSPod 上有、配置里没声明的线路, 说明有人绕过工具直接改了解析
-	for line := range apex {
+	for line, recs := range lines {
 		if !declared[line] {
+			actual := make([]string, 0, len(recs))
+			for _, r := range recs {
+				actual = append(actual, describeRecord(r.Type, r.Value))
+			}
 			out = append(out, model.Finding{
 				Level:  model.LevelWarn,
 				Code:   "route.undeclared",
 				Title:  fmt.Sprintf("DNSPod 上的线路「%s」没有在这里登记", line),
-				Detail: fmt.Sprintf("实际指向 %s", apex[line].Value),
+				Detail: "实际指向 " + strings.Join(actual, " + "),
 				Fix:    "补一条线路配置, 或确认这条解析是否该删",
 			})
 		}
@@ -199,30 +175,106 @@ func checkRoutes(h model.Hostname, snap model.Snapshot) []model.Finding {
 	return out
 }
 
-// expectedValue 算出某条线路应该解析到的目标值。
+// checkRouteLine 把一条线路的对账结果翻成巡检结论。双栈线路缺 AAAA 与整条线路没记录分开报:
+// 前者是 "这条腿没落地", 补上不动任何现有解析。
+func checkRouteLine(h model.Hostname, records []model.DNSRecord, p linePlan) []model.Finding {
+	recordName := routeRecordName(h)
+	if p.Ambiguous != "" {
+		return []model.Finding{{
+			Level: model.LevelError,
+			Code:  "route.ambiguous",
+			Title: p.Ambiguous,
+			Fix:   fmt.Sprintf("到 DNSPod 的 %s 里把主机记录 %s 在这条线路上的同类型记录删到只剩一条", h.DNSPodZone(), recordName),
+		}}
+	}
+
+	var out []model.Finding
+	existing := p.existing()
+	if len(existing) == 0 {
+		return []model.Finding{{
+			Level:  model.LevelError,
+			Code:   "route.missing",
+			Title:  fmt.Sprintf("线路「%s」在 DNSPod 上没有记录", p.Line),
+			Detail: "期望 " + describeWants(p.Want),
+			Fix:    fmt.Sprintf("在 DNSPod 的 %s 里给主机记录 %s 加「%s」线路记录, 或在「配置分线路解析记录」那一步点自动执行", h.DNSPodZone(), recordName, p.Line),
+		}}
+	}
+	if len(p.Create) > 0 {
+		out = append(out, model.Finding{
+			Level:  model.LevelError,
+			Code:   "route.missing",
+			Title:  fmt.Sprintf("线路「%s」还缺 %s 记录", p.Line, describeTypes(p.Create)),
+			Detail: "期望补上 " + describeWants(p.Create),
+			Fix:    "在「配置分线路解析记录」那一步点自动执行, 补缺失的记录不会动现有解析",
+		})
+	}
+	for _, m := range p.Modify {
+		r := records[m.Index]
+		out = append(out, model.Finding{
+			Level:  model.LevelError,
+			Code:   "route.mismatch",
+			Title:  fmt.Sprintf("线路「%s」指向的目标与配置不符", p.Line),
+			Detail: fmt.Sprintf("实际 %s / 期望 %s", describeRecord(r.Type, r.Value), describeRecord(m.Want.Type, m.Want.Value)),
+			Fix:    "在「配置分线路解析记录」那一步让程序覆盖 (会先列出差异等确认), 或把这里的回源配置改成实际值",
+		})
+	}
+	for _, i := range p.Delete {
+		r := records[i]
+		out = append(out, model.Finding{
+			Level:  model.LevelError,
+			Code:   "route.extra",
+			Title:  fmt.Sprintf("线路「%s」多出一条配置里没有的 %s 记录", p.Line, strings.ToUpper(r.Type)),
+			Detail: "实际 " + describeRecord(r.Type, r.Value),
+			Fix:    "在「配置分线路解析记录」那一步让程序清掉 (会先列出清单等确认), 或把这个地址补进落点配置",
+		})
+	}
+	for _, i := range existing {
+		if r := records[i]; !r.Enabled {
+			out = append(out, model.Finding{
+				Level: model.LevelError,
+				Code:  "route.disabled",
+				Title: fmt.Sprintf("线路「%s」的 %s 记录处于停用状态", p.Line, strings.ToUpper(r.Type)),
+				Fix:   "在 DNSPod 里启用该记录",
+			})
+		}
+	}
+	return out
+}
+
+// describeTypes 列出一组期望记录的类型, 如 "AAAA" 或 "A / AAAA"。
+func describeTypes(wants []wantRecord) string {
+	types := make([]string, 0, len(wants))
+	for _, w := range wants {
+		types = append(types, w.Type)
+	}
+	return strings.Join(types, " / ")
+}
+
+// expectedValues 算出某条线路应该解析到的目标值: 一个主机名, 或一组 IP (双栈时 IPv4 + IPv6 各一个)。
 // 回源类型是开放式取值: SaaS 回退源要到运行时才知道具体主机名, 其余类型一律取配置里的落点值,
 // 新增回源类型不需要在这里加分支。
-func expectedValue(route model.Route, snap model.Snapshot) (string, error) {
+func expectedValues(route model.Route, snap model.Snapshot) ([]string, error) {
 	target := route.Target()
 	if target == nil {
-		return "", fmt.Errorf("线路既没引用回源, 也没填落点值")
+		return nil, fmt.Errorf("线路既没引用回源, 也没填落点值")
 	}
+	values := originAddresses(target.Value)
 	// 走 CF for SaaS 的线路: CNAME 指向 SaaS 区里任意一条橙云记录即可, 不必非得是被设为「回退源」的那条 ——
 	// 流量到了 CF 边缘是按 Host 头找自定义主机名的, CNAME 目标只负责把流量带进这个区。
 	// 所以填了落点值就以它为准, 没填才回落到该区当前的回退源。
 	if target.Kind == model.OriginSaaSFallback || target.Kind == model.OriginSaaSCustom {
-		if target.Value != "" {
-			return target.Value, nil
+		if len(values) > 0 {
+			return values, nil
 		}
 		if snap.FallbackOrigin == "" {
-			return "", fmt.Errorf("这条线路没填落点值, 而 SaaS 区也还没设置回退源")
+			return nil, fmt.Errorf("这条线路没填落点值, 而 SaaS 区也还没设置回退源")
 		}
-		return snap.FallbackOrigin, nil
+		return []string{snap.FallbackOrigin}, nil
 	}
-	if target.Value == "" {
-		return "", fmt.Errorf("回源 %s 没有填落点值", target.Name)
+	if len(values) == 0 {
+		return nil, fmt.Errorf("回源 %s 没有填落点值", target.Name)
 	}
-	return target.Value, nil
+	return values, nil
 }
 
 // routeRecordName 返回该域名的线路记录在 DNSPod 里的主机记录名。
@@ -232,17 +284,14 @@ func routeRecordName(h model.Hostname) string {
 	return relativeName(h.Hostname, h.DNSPodZone())
 }
 
-// routeRecords 收集指定主机记录名上按线路索引的落点记录 (A / AAAA / CNAME)。
-func routeRecords(records []model.DNSRecord, name string) map[string]model.DNSRecord {
-	out := make(map[string]model.DNSRecord)
+// routeLines 收集指定主机记录名上按线路分组的落点记录 (A / AAAA / CNAME), 双栈线路一组两条。
+func routeLines(records []model.DNSRecord, name string) map[string][]model.DNSRecord {
+	out := make(map[string][]model.DNSRecord)
 	for _, r := range records {
-		if !sameName(r.Name, name) {
+		if !sameName(r.Name, name) || !isTargetType(r.Type) {
 			continue
 		}
-		if r.Type != "CNAME" && r.Type != "A" && r.Type != "AAAA" {
-			continue
-		}
-		out[r.Line] = r
+		out[r.Line] = append(out[r.Line], r)
 	}
 	return out
 }
