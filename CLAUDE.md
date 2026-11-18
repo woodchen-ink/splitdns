@@ -253,5 +253,7 @@ Linux `~/.local/share/CZL/splitdns`, 下分 `data/` (库)、`logs/`、`cache/` (
 模块目录之外的文件。**构建时别带 `-s`**: 该目录不进仓库, 跳过前端构建的话 Wails 会塞一个占位 `index.html`,
 编译照样通过, 装出来却是个空壳。启动时有一道校验会拦住这种包。运行时按内容哈希决定是否重新摊到 `cache/web`, **别改回按大小之类的近似判断**:
 只改子页面时首页大小不变, 会让新二进制配着旧前端跑。
+**摊开必须在 `router.New` 之前做完**: `nextstatic` 建 handler 时就把导出目录建成索引并缓存 HTML,
+运行期改 `cache/web` 不会生效 (自动更新都是换进程重启, 不受影响)。
 
 打 `v*` tag 触发 GitHub Actions 出 Release。
