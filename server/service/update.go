@@ -30,6 +30,7 @@ const (
 	UpdateAvailable   UpdateState = "available"   // 有新版本
 	UpdateDownloading UpdateState = "downloading" // 正在下载 + 校验
 	UpdateInstalling  UpdateState = "installing"  // 已交给安装逻辑, 程序即将重启
+	UpdateManual      UpdateState = "manual"      // 新版本已校验并交到用户手里, 替换要用户自己做
 )
 
 // UpdateOptions 由桌面壳在启动时给出。server 不知道自己装在哪、怎么替换自己, 那是外壳的事。
@@ -42,9 +43,18 @@ type UpdateOptions struct {
 	AssetName func(tag string) string
 	// DownloadDir 安装包下载到哪
 	DownloadDir string
-	// Apply 拿到校验通过的安装包后执行安装, 成功时负责让程序退出 / 重启
+	// Apply 拿到校验通过的安装包后执行安装, 成功时负责让程序退出 / 重启;
+	// 只能交给用户自己替换时返回 *ManualInstallError
 	Apply func(file string) error
+	// ManualReason 非空表示这台机器上没法原地替换 (macOS 目录不可写 / 在 DMG 里运行等),
+	// Apply 只会把新版本交给用户。启动时就判定好, 让用户点按钮之前就知道会发生什么
+	ManualReason string
 }
+
+// ManualInstallError 表示安装包已下载校验, 但替换只能由用户完成; Hint 告诉用户下一步做什么。
+type ManualInstallError struct{ Hint string }
+
+func (e *ManualInstallError) Error() string { return e.Hint }
 
 // UpdateStatus 是 GET /api/update 的返回。
 type UpdateStatus struct {
@@ -54,10 +64,14 @@ type UpdateStatus struct {
 	DisabledReason string              `json:"disabledReason,omitempty"`
 	Latest         *selfupdate.Release `json:"latest"`
 	// CanAutoInstall 为 false 时前端只给"打开下载页"
-	CanAutoInstall bool       `json:"canAutoInstall"`
-	Received       int64      `json:"received"`
-	Total          int64      `json:"total"`
-	CheckedAt      *time.Time `json:"checkedAt"`
+	CanAutoInstall bool `json:"canAutoInstall"`
+	// ManualReason 非空时自动安装只下载校验, 不会原地替换重启 (原因给用户看)
+	ManualReason string `json:"manualReason,omitempty"`
+	// Notice 仅 manual 时有值: 用户接下来要做什么
+	Notice    string     `json:"notice,omitempty"`
+	Received  int64      `json:"received"`
+	Total     int64      `json:"total"`
+	CheckedAt *time.Time `json:"checkedAt"`
 	// Error 最近一次检查或安装的失败原因, 下一次成功后清掉
 	Error string `json:"error"`
 }
@@ -72,7 +86,7 @@ var updater = struct {
 func StartUpdater(opts UpdateOptions) {
 	updater.mu.Lock()
 	updater.opts = opts
-	updater.status = UpdateStatus{State: UpdateIdle, CurrentVersion: opts.CurrentVersion}
+	updater.status = UpdateStatus{State: UpdateIdle, CurrentVersion: opts.CurrentVersion, ManualReason: opts.ManualReason}
 	switch {
 	case !validVersion(opts.CurrentVersion):
 		updater.status.State = UpdateDisabled
@@ -136,7 +150,7 @@ func CheckUpdate(ctx context.Context) error {
 		updater.status.Error = err.Error()
 		return err
 	}
-	updater.status.Error = ""
+	updater.status.Error, updater.status.Notice = "", ""
 	if !selfupdate.Newer(rel.Tag, opts.CurrentVersion) {
 		updater.status.State = UpdateIdle
 		updater.status.Latest = nil

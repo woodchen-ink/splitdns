@@ -15,29 +15,29 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// waitPidFlag 是绿色版替换自身后拉起新进程时带的参数: 新进程先等老进程退干净,
-// 否则单实例锁还在老进程手里, 新进程会把自己当成"第二个实例"转交参数后直接退出。
-const waitPidFlag = "--wait-pid="
-
 // platformUpdater 按安装方式决定更新包与安装手段。
 //
 // exe 就在安装根目录下 = 安装版, 用新安装器静默覆盖 (按用户安装, 不弹 UAC);
 // 否则是绿色版, 就地替换 exe。发布只出 amd64, 其他架构只能手动下载。
-func platformUpdater(dirs appDirs) (func(tag string) string, func(file string) error) {
+func platformUpdater(dirs appDirs) platformUpdate {
 	if runtime.GOARCH != "amd64" {
-		return nil, nil
+		return platformUpdate{}
 	}
 	exe, err := currentExe()
 	if err != nil {
 		slog.Warn("取可执行文件路径失败, 自动安装不可用", "err", err)
-		return nil, nil
+		return platformUpdate{}
 	}
 	if strings.EqualFold(filepath.Clean(filepath.Dir(exe)), filepath.Clean(dirs.Root)) {
-		return func(tag string) string { return "splitdns-" + tag + "-windows-amd64-installer.exe" },
-			applyInstaller
+		return platformUpdate{
+			assetName: func(tag string) string { return "splitdns-" + tag + "-windows-amd64-installer.exe" },
+			apply:     applyInstaller,
+		}
 	}
-	return func(tag string) string { return "splitdns-" + tag + "-windows-amd64-portable.zip" },
-		func(file string) error { return applyPortable(file, exe) }
+	return platformUpdate{
+		assetName: func(tag string) string { return "splitdns-" + tag + "-windows-amd64-portable.zip" },
+		apply:     func(file string) error { return applyPortable(file, exe) },
+	}
 }
 
 func currentExe() (string, error) {
@@ -124,21 +124,14 @@ func cleanupReplacedExe() {
 
 // waitForPreviousInstance 处理 --wait-pid: 最多等 30 秒, 超时也照常启动 (最坏是被单实例锁转交后退出)。
 func waitForPreviousInstance(args []string) {
-	for _, arg := range args {
-		pidText, ok := strings.CutPrefix(arg, waitPidFlag)
-		if !ok {
-			continue
-		}
-		pid, err := strconv.Atoi(pidText)
-		if err != nil || pid <= 0 {
-			return
-		}
-		h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
-		if err != nil {
-			return // 进程已经不在了
-		}
-		defer windows.CloseHandle(h)
-		_, _ = windows.WaitForSingleObject(h, 30_000)
+	pid, ok := waitPidArg(args)
+	if !ok {
 		return
 	}
+	h, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		return // 进程已经不在了
+	}
+	defer windows.CloseHandle(h)
+	_, _ = windows.WaitForSingleObject(h, 30_000)
 }

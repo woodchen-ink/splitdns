@@ -24,11 +24,12 @@ func StartInstallUpdate() error {
 	if st.State == UpdateDownloading || st.State == UpdateInstalling {
 		return nil
 	}
-	if st.State != UpdateAvailable || !st.CanAutoInstall || st.Latest == nil {
+	// manual 也允许再来一次: 用户可能把访达里那份弄丢了
+	if (st.State != UpdateAvailable && st.State != UpdateManual) || !st.CanAutoInstall || st.Latest == nil {
 		return ErrNoUpdate
 	}
 	st.State = UpdateDownloading
-	st.Received, st.Total, st.Error = 0, st.Latest.Find(updater.opts.AssetName(st.Latest.Tag)).Size, ""
+	st.Received, st.Total, st.Error, st.Notice = 0, st.Latest.Find(updater.opts.AssetName(st.Latest.Tag)).Size, "", ""
 	go runInstall(updater.opts, st.Latest)
 	return nil
 }
@@ -39,6 +40,14 @@ func runInstall(opts UpdateOptions, rel *selfupdate.Release) {
 		setUpdateState(UpdateInstalling, "")
 		slog.Info("新版本校验通过, 开始安装", "version", rel.Tag, "file", file)
 		err = opts.Apply(file)
+	}
+	var manual *ManualInstallError
+	if errors.As(err, &manual) {
+		slog.Info("新版本已交给用户手动替换", "version", rel.Tag)
+		updater.mu.Lock()
+		updater.status.State, updater.status.Notice = UpdateManual, manual.Hint
+		updater.mu.Unlock()
+		return
 	}
 	if err != nil {
 		slog.Error("自动更新失败", "version", rel.Tag, "err", err)

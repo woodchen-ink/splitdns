@@ -233,7 +233,8 @@ export type UpdateState =
   | "checking"
   | "available"
   | "downloading"
-  | "installing";
+  | "installing"
+  | "manual";
 
 export interface UpdateRelease {
   tag: string;
@@ -248,8 +249,12 @@ export interface UpdateStatus {
   // disabledReason 仅 disabled 时有值 (本地构建 / 包里没有更新公钥)
   disabledReason?: string;
   latest: UpdateRelease | null;
-  // canAutoInstall 为 false 时只能去下载页手动更新 (macOS、老版本发布没有签名文件)
+  // canAutoInstall 为 false 时只能去下载页手动更新 (老版本发布没有签名文件、平台没有安装手段)
   canAutoInstall: boolean;
+  // manualReason 非空: 自动安装只下载校验并在访达里显示新版本, 替换由用户完成
+  manualReason?: string;
+  // notice 仅 manual 时有值: 用户接下来要做什么
+  notice?: string;
   received: number;
   total: number;
   checkedAt: string | null;

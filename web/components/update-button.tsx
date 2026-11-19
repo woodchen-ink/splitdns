@@ -67,7 +67,9 @@ export function UpdateButton({ className }: { className?: string }) {
 
   const state = data.state;
   const busy = state === "downloading" || state === "installing";
-  const hasUpdate = state === "available" || busy;
+  const hasUpdate = state === "available" || state === "manual" || busy;
+  // 不能原地替换时, 按钮只负责下载校验并在访达里显示, 不重启
+  const manual = Boolean(data.manualReason);
   const percent = data.total > 0 ? Math.min(100, Math.round((data.received / data.total) * 100)) : 0;
 
   let label = data.currentVersion;
@@ -76,7 +78,9 @@ export function UpdateButton({ className }: { className?: string }) {
   } else if (state === "downloading") {
     label = `下载中 ${percent}%`;
   } else if (state === "installing") {
-    label = "正在重启…";
+    label = manual ? "正在准备…" : "正在重启…";
+  } else if (state === "manual") {
+    label = "待替换新版本";
   }
 
   return (
@@ -131,7 +135,13 @@ export function UpdateButton({ className }: { className?: string }) {
                 </div>
               )}
               {state === "installing" && (
-                <p className="text-muted-foreground">校验通过, 正在安装, 程序马上会自动重启。</p>
+                <p className="text-muted-foreground">
+                  {manual ? "校验通过, 正在解压。" : "校验通过, 正在安装, 程序马上会自动重启。"}
+                </p>
+              )}
+              {state === "manual" && data.notice && <p>{data.notice}</p>}
+              {manual && state === "available" && data.canAutoInstall && (
+                <p className="text-muted-foreground">{data.manualReason}</p>
               )}
               {!data.canAutoInstall && state === "available" && (
                 <p className="text-muted-foreground">这个版本需要到下载页手动安装。</p>
@@ -161,7 +171,7 @@ export function UpdateButton({ className }: { className?: string }) {
             {hasUpdate && data.canAutoInstall && (
               <Button onClick={() => install.mutate()} disabled={install.isPending || busy}>
                 {busy ? <LoaderCircle className="animate-spin" /> : <Download />}
-                更新并重启
+                {manual ? (state === "manual" ? "重新下载" : "下载新版本") : "更新并重启"}
               </Button>
             )}
           </DialogFooter>

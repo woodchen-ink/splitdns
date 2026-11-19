@@ -1,12 +1,9 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package main
 
-// platformUpdater 在 macOS / Linux 上只提示新版本, 由用户去下载页手动更新:
-// 静默替换 .app 还没做 (要处理目录不可写、App Translocation、从 DMG 卷里运行这几种情况)。
-func platformUpdater(appDirs) (func(tag string) string, func(file string) error) {
-	return nil, nil
-}
+// platformUpdater 在 Linux 上只提示新版本: 这个工具没有 Linux 发行形态, 没有包可装。
+func platformUpdater(appDirs) platformUpdate { return platformUpdate{} }
 
 func cleanupReplacedExe() {}
 

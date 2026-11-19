@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -36,8 +37,32 @@ func startUpdater(dirs appDirs) {
 			opts.PublicKey = pub
 		}
 	}
-	opts.AssetName, opts.Apply = platformUpdater(dirs)
+	pu := platformUpdater(dirs)
+	opts.AssetName, opts.Apply, opts.ManualReason = pu.assetName, pu.apply, pu.manualReason
 	service.StartUpdater(opts)
+}
+
+// platformUpdate 是各平台给出的安装手段。assetName / apply 为 nil 表示这个平台只能去下载页手动更新。
+type platformUpdate struct {
+	assetName func(tag string) string
+	apply     func(file string) error
+	// manualReason 非空: apply 只把新版本交给用户, 不会原地替换
+	manualReason string
+}
+
+// waitPidFlag 是自更新替换完程序后拉起新进程时带的参数: 新进程先等老进程退干净,
+// 否则单实例锁还在老进程手里, 新进程会把自己当成"第二个实例"转交参数后直接退出。
+const waitPidFlag = "--wait-pid="
+
+// waitPidArg 从启动参数里取出要等的老进程 PID。
+func waitPidArg(args []string) (int, bool) {
+	for _, arg := range args {
+		if text, ok := strings.CutPrefix(arg, waitPidFlag); ok {
+			pid, err := strconv.Atoi(text)
+			return pid, err == nil && pid > 0
+		}
+	}
+	return 0, false
 }
 
 // cleanupAfterUpdate 清掉上一次更新的残留。安装器可能还没退出, 删不掉就留到下次, 不影响运行。

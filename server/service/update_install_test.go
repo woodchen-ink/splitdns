@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/woodchen-ink/splitdns/server/pkg/selfupdate"
 )
@@ -84,4 +85,36 @@ func TestDownloadVerified(t *testing.T) {
 			t.Fatal("签名不对的清单不该通过")
 		}
 	})
+}
+
+func TestRunInstallManual(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	const name = "splitdns-v9.9.9-macos-universal.zip"
+	rel := fakeRelease(t, signedFiles(priv, name, []byte("zip bytes")))
+	const hint = "拖进「应用程序」替换"
+
+	saved := updater.opts
+	t.Cleanup(func() { updater.opts = saved; updater.status = UpdateStatus{} })
+	updater.opts = UpdateOptions{
+		PublicKey:    pub,
+		AssetName:    func(string) string { return name },
+		DownloadDir:  filepath.Join(t.TempDir(), "updates"),
+		Apply:        func(string) error { return &ManualInstallError{Hint: hint} },
+		ManualReason: "不可写",
+	}
+	updater.status = UpdateStatus{State: UpdateDownloading, Latest: rel, CanAutoInstall: true}
+
+	runInstall(updater.opts, rel)
+
+	st := GetUpdateStatus()
+	if st.State != UpdateManual || st.Notice != hint || st.Error != "" {
+		t.Fatalf("交给用户替换应落在 manual 且不算出错: %+v", st)
+	}
+	// manual 之后允许再来一次 (用户可能弄丢了访达里那份)
+	if err := StartInstallUpdate(); err != nil {
+		t.Fatalf("manual 状态应允许重新下载: %v", err)
+	}
+	for GetUpdateStatus().State == UpdateDownloading || GetUpdateStatus().State == UpdateInstalling {
+		time.Sleep(10 * time.Millisecond)
+	}
 }
