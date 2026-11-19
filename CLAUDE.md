@@ -146,7 +146,7 @@
   安装手段由桌面壳给出: exe 在安装根目录下 = 安装版, 静默跑新安装器 `/S /relaunch` 后退出 (安装器等 exe 释放再覆盖、装完拉起新版本);
   否则是绿色版, 把运行中的 exe 改名 `.old` 腾位置写入新 exe, 带 `--wait-pid` 拉起新进程 ——
   **新进程必须等老进程退干净**, 不然单实例锁还在老进程手里, 新进程会把自己当第二个实例转交参数后退出。
-  macOS 只提示并打开下载页 (未签名的 .app 自己替换容易被 Gatekeeper 拦)。
+  macOS 只提示并打开下载页 (包已签名公证, 但静默替换 .app 还没做)。
   `/api/update` 不要求登录: 登录流程出 bug 时, 修复它的版本得能在登录页装上
 
 ## 平台上踩过的坑 (改动相关代码前先看这里)
@@ -234,7 +234,10 @@ cd desktop && wails build -platform darwin/universal -skipbindings
 ```
 
 **macOS 端只能在 macOS 上构建** (要链 WebKit, 交叉编译不可行), CI 里是独立的 job。
-发出去的 .app 没签名没公证, Gatekeeper 会拦, 说明写在 Release 里。
+CI 用团队共用的 Developer ID 证书签名 (hardened runtime, entitlements 刻意为空, 见
+`desktop/build/darwin/entitlements.plist`), 公证 DMG 后把票据钉到 DMG 与 .app, zip 用钉过票据的 .app 打。
+凭据是仓库 secrets `CZL_MACOS_*` / `CZL_APPLE_*` (与其他 CZL 项目同名同值), 缺任何一项退回 ad-hoc 签名并报 warning。
+构建时 `build/darwin/` 下没有 `Info.plist`, 由 Wails 按 `wails.json` 现生成 (含 `CFBundleURLTypes`), 别只放一份 entitlements 就以为能改 plist。
 
 **安装与数据目录** (`desktop/appdir.go` + `build/windows/installer/project.nsi`): 根目录固定为
 Windows `%LOCALAPPDATA%\CZL\splitdns` / macOS `~/Library/Application Support/CZL/splitdns` /

@@ -84,17 +84,105 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: wails build -platform darwin/universal -skipbindings -ldflags "-X main.version=$VERSION"
 
-      - name: 打包
+      # 有 Developer ID 证书与公证 Key (secrets CZL_MACOS_* / CZL_APPLE_*) 时: hardened runtime 由内向外签名 .app,
+      # 打 DMG 并签名, 提交公证后把票据钉到 DMG 与 .app 上, 再用钉过票据的 .app 打 zip (离线也能过 Gatekeeper)。
+      # secrets 不全 (fork 仓库等) 时退回 ad-hoc 签名: Apple Silicon 不运行无签名代码, lipo 合并会让链接器给的签名失效;
+      # 这样的包首次打开要右键放行。
+      # 用 ditto 而不是 zip: .app 是目录, 里面有符号链接与可执行位, zip 会丢
+      - name: 签名、公证与打包
         working-directory: desktop/build/bin
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        # 用 ditto 而不是 zip: .app 是目录, 里面有符号链接与可执行位, zip 会丢
-        run: ditto -c -k --sequesterRsrc --keepParent splitdns.app "splitdns-$VERSION-macos-universal.zip"
+          CERT_P12_BASE64: ${{ secrets.CZL_MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CZL_MACOS_CERT_PASSWORD }}
+          API_KEY_P8_BASE64: ${{ secrets.CZL_APPLE_API_KEY_P8_BASE64 }}
+          API_KEY_ID: ${{ secrets.CZL_APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.CZL_APPLE_API_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.CZL_APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app=splitdns.app
+          dmg="splitdns-$VERSION-macos-universal.dmg"
+          zip="splitdns-$VERSION-macos-universal.zip"
+          plutil -lint "$app/Contents/Info.plist"
+
+          make_dmg() {
+            rm -rf dmg && mkdir dmg && ditto "$app" "dmg/$app" && ln -s /Applications dmg/Applications
+            hdiutil create -volname splitdns -srcfolder dmg -ov -format UDZO "$dmg"
+            rm -rf dmg
+          }
+
+          if [ -z "$CERT_P12_BASE64" ] || [ -z "$CERT_PASSWORD" ] || [ -z "$API_KEY_P8_BASE64" ] \
+             || [ -z "$API_KEY_ID" ] || [ -z "$API_ISSUER_ID" ] || [ -z "$TEAM_ID" ]; then
+            echo "::warning::缺少 macOS 签名/公证 secrets, 改用 ad-hoc 签名, 用户首次打开需右键放行"
+            codesign --force --deep --sign - "$app"
+            codesign --verify --deep --strict "$app"
+            make_dmg
+            ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+            exit 0
+          fi
+
+          # 证书导入一次性钥匙串, 清理在下一步 (always) 里做
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          kc_pass=$(openssl rand -hex 24)
+          security create-keychain -p "$kc_pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$kc_pass" "$keychain"
+          echo "$CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_pass" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" \
+            | grep "Developer ID Application" | grep "($TEAM_ID)" | head -n1 | awk '{print $2}')
+          [ -n "$identity" ] || { echo "::error::钥匙串里没有 Team $TEAM_ID 的 Developer ID Application 证书"; exit 1; }
+
+          # 由内向外: 先签包内其他 Mach-O (目前没有, 以后加 helper / dylib 时自动覆盖), 最后签 .app 本体
+          entitlements="$GITHUB_WORKSPACE/desktop/build/darwin/entitlements.plist"
+          main_exe="$app/Contents/MacOS/$(plutil -extract CFBundleExecutable raw "$app/Contents/Info.plist")"
+          sign() { codesign --force --options runtime --timestamp --entitlements "$entitlements" --sign "$identity" "$@"; }
+          find "$app/Contents" -type f ! -path "$main_exe" -print0 | while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then sign "$f"; fi
+          done
+          sign "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --verbose=2 "$app" 2>&1 | grep -E 'Authority|TeamIdentifier|flags'
+
+          make_dmg
+          codesign --force --timestamp --sign "$identity" "$dmg"
+
+          # 公证 DMG (里面的 .app 一起登记), 没通过时打印公证日志再失败。
+          # Apple 排队有时超过 30 分钟, 等待上限放宽到 2 小时
+          echo "$API_KEY_P8_BASE64" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          notary=(--key "$RUNNER_TEMP/AuthKey.p8" --key-id "$API_KEY_ID" --issuer "$API_ISSUER_ID")
+          xcrun notarytool submit "$dmg" "${notary[@]}" --wait --timeout 2h --output-format json | tee notary.json
+          status=$(plutil -extract status raw notary.json)
+          if [ "$status" != "Accepted" ]; then
+            xcrun notarytool log "$(plutil -extract id raw notary.json)" "${notary[@]}" || true
+            echo "::error::公证未通过: $status"; exit 1
+          fi
+          rm -f "$RUNNER_TEMP/AuthKey.p8" notary.json
+
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl -a -vvv -t install "$dmg"
+          xcrun stapler staple "$app"
+          spctl -a -vvv -t exec "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+
+      - name: 清理签名钥匙串
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/AuthKey.p8"
 
       - uses: actions/upload-artifact@v7
         with:
           name: macos
-          path: desktop/build/bin/*-macos-universal.zip
+          if-no-files-found: error
+          path: |
+            desktop/build/bin/*-macos-universal.dmg
+            desktop/build/bin/*-macos-universal.zip
 
   release:
     needs: [version, windows, macos]
@@ -141,13 +229,9 @@ jobs:
 
             ### macOS
 
-            `*-macos-universal.zip` 解压出 `splitdns.app`, Intel 与 Apple Silicon 通用。
+            打开 `*-macos-universal.dmg`, 把 `splitdns.app` 拖进「应用程序」即可; `*-macos-universal.zip` 是同一个 .app 的压缩包。
+            Intel 与 Apple Silicon 通用, 已用 Developer ID 签名并经 Apple 公证, 双击直接打开。
             数据在 `~/Library/Application Support/CZL/splitdns`, 旧版目录里的数据首次启动自动搬过来。
-
-            **没有做签名和公证**, 首次打开会被 Gatekeeper 拦下。两种放行方式任选:
-
-            - 右键点 `splitdns.app` → 打开 → 在弹窗里再点一次「打开」
-            - 或者终端跑: `xattr -dr com.apple.quarantine /Applications/splitdns.app`
 
             ### 升级
 

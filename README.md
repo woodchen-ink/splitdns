@@ -50,11 +50,9 @@ CNAME（或优选 IP 的 A 记录），流量照样进 CF 边缘、按 Host 头�
 
 **macOS**
 
-`*-macos-universal.zip` 解压出 `splitdns.app`，Intel 与 Apple Silicon 通用，数据在
+打开 `*-macos-universal.dmg`，把 `splitdns.app` 拖进「应用程序」（`*-macos-universal.zip` 是同一个 .app 的压缩包）。
+Intel 与 Apple Silicon 通用，已用 Developer ID 签名并经 Apple 公证，双击直接打开。数据在
 `~/Library/Application Support/CZL/splitdns`（旧版目录里的数据首次启动自动搬过来）。
-
-没有做签名和公证，首次打开会被 Gatekeeper 拦下——右键点 `.app` → 打开 → 再点一次「打开」即可，
-或者 `xattr -dr com.apple.quarantine /Applications/splitdns.app`。
 
 不需要域名，也不监听任何端口，平台密钥只存在你自己机器上。
 
