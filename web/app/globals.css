@@ -127,4 +127,45 @@
   html {
     @apply font-sans;
   }
+
+  /* 客户端壳 (data-app-shell, 见 lib/app-shell.ts) 里默认不可选, 内容区可选。
+     -webkit- 前缀不能省: WKWebView 只认带前缀的写法。
+     写在 base 层, 组件上的 select-text / select-none 工具类照样能覆盖; 新内容区挂 data-selectable */
+  [data-app-shell] body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  /* 输入框必须显式恢复: 不然在 WKWebView 里会跟着祖先变成输入不了 / 选不中 */
+  [data-app-shell]
+    :is(
+      main,
+      [data-slot="dialog-content"],
+      [data-slot="alert"],
+      [data-selectable],
+      pre,
+      code,
+      input,
+      textarea,
+      [contenteditable]:not([contenteditable="false"])
+    ) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  /* 内容区里的控件仍不可选 */
+  [data-app-shell]
+    :is(main, [data-slot="dialog-content"], [data-slot="alert"], [data-selectable])
+    :is(
+      button,
+      [role="button"],
+      [role="tab"],
+      [role="menuitem"],
+      [role="option"],
+      [role="switch"],
+      [role="checkbox"],
+      [data-slot="badge"],
+      label
+    ) {
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }

@@ -8,6 +8,8 @@ import "./globals.css";
 import { Providers } from "./providers";
 import { AppHeader } from "@/components/app-header";
 import { AuthGate } from "@/components/auth-gate";
+import { SelectAllGuard } from "@/components/select-all-guard";
+import { appShellScript } from "@/lib/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
@@ -28,11 +30,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // data-app-shell 由 head 里的内联脚本在水合前打上, 首屏就带着客户端的选择规则, 不闪一下
     <html
       lang="zh-CN"
       className={`${GeistSans.variable} ${GeistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: appShellScript }} />
+      </head>
       <body className="bg-background text-foreground h-full">
+        <SelectAllGuard />
         <Providers>
           <AuthGate>
             <div className="flex h-full flex-col">

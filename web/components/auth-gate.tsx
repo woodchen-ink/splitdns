@@ -49,7 +49,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <div className="flex h-full items-center justify-center px-6">
         <div className="max-w-md space-y-3 text-center">
           <p className="text-sm font-medium">读取登录状态失败</p>
-          <p className="text-muted-foreground text-sm">{error?.message ?? "接口没有返回数据"}</p>
+          <p data-selectable className="text-muted-foreground text-sm">{error?.message ?? "接口没有返回数据"}</p>
           <Button variant="outline" size="sm" onClick={() => void refetch()}>
             重试
           </Button>

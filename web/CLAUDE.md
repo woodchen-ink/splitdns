@@ -24,6 +24,9 @@ Next.js 16 App Router + `output: 'export'` 静态导出, Tailwind + Shadcn UI + 
   `queryKeys.session()`, 组件里不各判一次
 - `components/update-button.tsx` 在顶栏和登录页各挂一个: 只轮询 `GET /api/update` (读后端内存, 下载 / 安装期间 1s, 平时 60s),
   不自己触发 GitHub 检查; 能否自动安装以后端 `canAutoInstall` 为准, 前端不按平台判断
+- **文字选择只在客户端壳里收紧**: `lib/app-shell.ts` 的内联脚本按 webview 原生对象 (`chrome.webview` / `webkit.messageHandlers`)
+  在 html 上打 `data-app-shell`, `globals.css` 的规则全挂在它下面 —— 默认不可选, `main` / 弹窗 / `Alert` / 代码块 / 输入框可选,
+  其中的控件仍不可选。新内容区挂 `data-selectable`, 可整块全选的挂 `data-select-block`; `select-all-guard.tsx` 接管 Ctrl/⌘+A
 - 当前 shadcn `Button` 不支持 `asChild`, 需要按钮样式的链接用 `buttonVariants()` 给 `Link` 加 class
 - **字体走 `geist` 包, 不要用 `next/font/google`**: 后者构建时要现拉 fonts.googleapis.com,
   那个域名在国内连不上, 本地一构建就直接失败 (CI 有网所以只坏本地)。CSS 变量名两者一致, 换回去不会报错、只会构建不了
