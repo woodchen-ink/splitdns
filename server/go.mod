@@ -8,7 +8,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.143
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/dnspod v1.3.131
-	github.com/woodchen-ink/go-web-utils v1.7.0
+	github.com/woodchen-ink/go-web-utils v1.10.1
 	gorm.io/gorm v1.31.2
 )
 
@@ -19,7 +19,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	golang.org/x/sys v0.7.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.20.0 // indirect
 	modernc.org/libc v1.22.5 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
